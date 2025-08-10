@@ -15,13 +15,15 @@ def clean_html(html_text):
     return text.strip()
 
 
-def build_fb2(data, book_info=None):
+def build_fb2(data, book_info=None, volume=None, chapter_number=None):
     """
     Создает FB2 файл из данных главы.
 
     Args:
         data: данные главы
         book_info: информация о книге (название, описание и т.д.)
+        volume: номер тома (приоритет над data.get("volume"))
+        chapter_number: номер главы (приоритет над data.get("number"))
     """
     fb2 = ET.Element("FictionBook")
     fb2.set("xmlns:l", "http://www.w3.org/1999/xlink")
@@ -36,7 +38,9 @@ def build_fb2(data, book_info=None):
 
     # Название книги (берем из book_info, если есть, иначе из названия главы)
     book_title = ET.SubElement(title_info, "book-title")
-    if book_info and book_info.get("name"):
+    if book_info and book_info.get("display_name"):
+        book_title.text = book_info.get("display_name")
+    elif book_info and book_info.get("name"):
         book_title.text = book_info.get("name")
     else:
         book_title.text = data.get("name", "Без названия")
@@ -61,21 +65,25 @@ def build_fb2(data, book_info=None):
     # Создаем основную секцию
     main_section = ET.SubElement(body, "section")
 
-    # Заголовок книги
+    # Заголовок главы (Том X, Глава Y)
     title_info = ET.SubElement(main_section, "title")
-    title_info.text = data.get("name", "Без названия")
 
-    # Добавляем информацию о томе/главе
-    volume_info = data.get("volume", 1)
-    if volume_info and str(volume_info).isdigit() and int(volume_info) > 1:
-        volume_title = ET.SubElement(main_section, "title")
-        volume_title.text = f"Том {volume_info}"
+    # Формируем заголовок как "Том X, Глава Y"
+    # Используем переданные параметры, если они есть, иначе берем из data
+    volume_info = volume if volume is not None else data.get("volume", 1)
+    chapter_num = (
+        chapter_number if chapter_number is not None else data.get("number", 0)
+    )
 
-    # Номер главы
-    chapter_number = data.get("number", 0)
-    if chapter_number and str(chapter_number).isdigit() and int(chapter_number) > 0:
-        chapter_title = ET.SubElement(main_section, "title")
-        chapter_title.text = f"Глава {chapter_number}"
+    if volume_info and str(volume_info).isdigit() and int(volume_info) > 0:
+        if chapter_num and str(chapter_num).isdigit() and int(chapter_num) > 0:
+            title_info.text = f"Том {volume_info}, Глава {chapter_num}"
+        else:
+            title_info.text = f"Том {volume_info}"
+    elif chapter_num and str(chapter_num).isdigit() and int(chapter_num) > 0:
+        title_info.text = f"Глава {chapter_num}"
+    else:
+        title_info.text = "Без названия"
 
     # Основной контент главы
     content = data.get("content", "")

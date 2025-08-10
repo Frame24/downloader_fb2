@@ -69,6 +69,7 @@ def download_chapters(
     start_chapter: int = 1,
     chapters_count: int = None,
     max_retries: int = 3,
+    volume_filter: str = None,
 ):
     """
     Скачивает главы с указанными параметрами.
@@ -92,7 +93,9 @@ def download_chapters(
         print("📖 Получаем информацию о книге...")
         book_info = fetch_book_info(slug, max_retries)
         if book_info:
-            print(f"📖 Название книги: {book_info.get('name', 'Неизвестно')}")
+            print(
+                f"📖 Название книги: {book_info.get('display_name', book_info.get('name', 'Неизвестно'))}"
+            )
             if book_info.get("description"):
                 desc = book_info.get("description", "")[:100]
                 print(f"📝 Описание: {desc}...")
@@ -114,6 +117,7 @@ def download_chapters(
             (num, branch_id, volume)
             for num, branch_id, volume in chapters
             if num >= start_chapter
+            and (volume_filter is None or volume == volume_filter)
         ]
 
         if chapters_count:
@@ -185,7 +189,10 @@ def download_chapters(
                     filepath = os.path.join(book_dir, filename)
 
                     # Генерируем FB2 с информацией о книге
-                    fb2_content = build_fb2(data, book_info)
+                    # Передаем правильные номера тома и главы из списка глав
+                    fb2_content = build_fb2(
+                        data, book_info, volume=volume, chapter_number=chapter_num
+                    )
 
                     # Сохраняем файл
                     with open(filepath, "wb") as f:
@@ -240,12 +247,16 @@ def parse_arguments():
   python download_new_book.py --url "URL"       # Загрузить все главы с 1
   python download_new_book.py --url "URL" --start 10 --count 5  # Главы 10-14
   python download_new_book.py --url "URL" --start 100            # С главы 100 до конца
+  python download_new_book.py --url "URL" --start 47 --volume 2 # Главу 47 из тома 2
         """,
     )
 
     parser.add_argument("--url", type=str, help="URL книги с ranobelib.me")
     parser.add_argument(
         "--start", type=int, default=1, help="Номер начальной главы (по умолчанию: 1)"
+    )
+    parser.add_argument(
+        "--volume", type=str, help="Номер тома для фильтрации (например: 2)"
     )
     parser.add_argument(
         "--count",
@@ -281,7 +292,9 @@ if __name__ == "__main__":
             book_dir = args.output or f"results/{slug}"
 
             # Запускаем загрузку
-            download_chapters(args.url, book_dir, args.start, args.count, args.retries)
+            download_chapters(
+                args.url, book_dir, args.start, args.count, args.retries, args.volume
+            )
         else:
             # Интерактивный режим
             url, start_chapter, chapters_count = get_user_input()

@@ -35,7 +35,17 @@ def fetch_book_info(slug: str, max_retries: int = 3):
         try:
             resp = requests.get(f"{API_BASE}/{slug}", timeout=TIMEOUT)
             resp.raise_for_status()
-            return resp.json().get("data", {})
+            data = resp.json().get("data", {})
+
+            # Приоритет названий: русское -> английское -> оригинальное
+            if data.get("rus_name"):
+                data["display_name"] = data["rus_name"]
+            elif data.get("eng_name"):
+                data["display_name"] = data["eng_name"]
+            else:
+                data["display_name"] = data.get("name", "Неизвестно")
+
+            return data
         except requests.exceptions.Timeout:
             print(
                 f"  → Таймаут при получении информации о книге (попытка {attempt + 1}/{max_retries})"
