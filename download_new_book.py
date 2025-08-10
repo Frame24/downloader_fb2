@@ -70,6 +70,7 @@ def download_chapters(
     chapters_count: int = None,
     max_retries: int = 3,
     volume_filter: str = None,
+    args=None,
 ):
     """
     Скачивает главы с указанными параметрами.
@@ -138,6 +139,8 @@ def download_chapters(
 
         # Скачиваем главы
         successful_downloads = 0
+        failed_chapters = []  # Список неудачных скачиваний для повторных попыток
+
         for i, (chapter_num, branch_id, volume) in enumerate(filtered_chapters, 1):
             print(
                 f"\n📥 Скачиваем главу {chapter_num} ({i}/{len(filtered_chapters)})..."
@@ -213,13 +216,115 @@ def download_chapters(
                 print(
                     f"   ❌ Не удалось скачать главу {chapter_num} после {max_retries} попыток"
                 )
+                failed_chapters.append((chapter_num, branch_id, volume))
+
+        # Если есть неудачные скачивания, пытаемся их повторить
+        if failed_chapters:
+            print(
+                f"\n🔄 Повторная попытка скачивания {len(failed_chapters)} неудачных глав..."
+            )
+            retry_successful = 0
+
+            for chapter_num, branch_id, volume in failed_chapters:
+                print(f"\n🔄 Повторное скачивание главы {chapter_num}...")
+
+                # Увеличиваем количество попыток для повторного скачивания
+                for attempt in range(5):  # 5 попыток для повторного скачивания
+                    try:
+                        print(f"   🔄 Попытка {attempt + 1}/5...")
+
+                        data = fetch_chapter(
+                            slug,
+                            branch_id,
+                            volume=volume,
+                            number=chapter_num,
+                            max_retries=1,
+                        )
+
+                        if not data:
+                            if attempt < 4:
+                                print(
+                                    f"      ⏳ Ждем 5 секунд перед повторной попыткой..."
+                                )
+                                time.sleep(5)
+                            continue
+
+                        # Формируем имя файла
+                        chapter_name = data.get("name", f"Глава_{chapter_num}")
+                        safe_name = "".join(
+                            c for c in chapter_name if c.isalnum() or c in " -_"
+                        ).rstrip()
+
+                        volume_info = data.get("volume", 1)
+                        if (
+                            volume_info
+                            and str(volume_info).isdigit()
+                            and int(volume_info) > 1
+                        ):
+                            filename = (
+                                f"{chapter_num:03d}_Том{volume_info}_{safe_name}.fb2"
+                            )
+                        else:
+                            filename = f"{chapter_num:03d}_{safe_name}.fb2"
+
+                        filepath = os.path.join(book_dir, filename)
+
+                        fb2_content = build_fb2(
+                            data, book_info, volume=volume, chapter_number=chapter_num
+                        )
+
+                        with open(filepath, "wb") as f:
+                            f.write(fb2_content)
+
+                        print(f"      ✅ Успешно сохранено: {filename}")
+                        successful_downloads += 1
+                        retry_successful += 1
+                        break
+
+                    except Exception as e:
+                        print(f"      ❌ Ошибка: {e}")
+                        if attempt < 4:
+                            print(f"      ⏳ Ждем 5 секунд перед повторной попыткой...")
+                            time.sleep(5)
+                else:
+                    print(
+                        f"   ❌ Не удалось скачать главу {chapter_num} после 5 повторных попыток"
+                    )
+
+            if retry_successful > 0:
+                print(
+                    f"\n✅ Дополнительно скачано {retry_successful} глав при повторных попытках"
+                )
 
         print("\n" + "=" * 50)
         print(f"🎉 Скачивание завершено!")
         print(
             f"✅ Успешно скачано: {successful_downloads}/{len(filtered_chapters)} глав"
         )
+        if (
+            len(failed_chapters)
+            - (retry_successful if "retry_successful" in locals() else 0)
+            > 0
+        ):
+            remaining_failed = len(failed_chapters) - (
+                retry_successful if "retry_successful" in locals() else 0
+            )
+            print(f"❌ Не удалось скачать: {remaining_failed} глав")
         print(f"📁 Файлы сохранены в: {book_dir}")
+
+        # Автоматически объединяем главы в книгу
+        if successful_downloads > 0 and not getattr(args, "no_merge", False):
+            try:
+                from ranobe2fb2.fb2 import merge_chapters_to_book
+
+                merged_file = merge_chapters_to_book(book_dir, book_info)
+                if merged_file:
+                    print(f"📚 Книга объединена в: {merged_file}")
+            except Exception as e:
+                print(f"⚠️ Предупреждение: Не удалось объединить главы в книгу: {e}")
+                print("   Главы остались в отдельных файлах")
+        elif getattr(args, "no_merge", False):
+            print("📝 Объединение глав отключено (используйте --no-merge)")
 
     except Exception as e:
         print(f"❌ Критическая ошибка: {e}")
@@ -248,6 +353,7 @@ def parse_arguments():
   python download_new_book.py --url "URL" --start 10 --count 5  # Главы 10-14
   python download_new_book.py --url "URL" --start 100            # С главы 100 до конца
   python download_new_book.py --url "URL" --start 47 --volume 2 # Главу 47 из тома 2
+  python download_new_book.py --url "URL" --no-merge            # Без объединения в книгу
         """,
     )
 
@@ -262,6 +368,11 @@ def parse_arguments():
         "--count",
         type=int,
         help="Количество глав для загрузки (по умолчанию: все доступные)",
+    )
+    parser.add_argument(
+        "--no-merge",
+        action="store_true",
+        help="Не объединять главы в книгу после загрузки",
     )
     parser.add_argument(
         "--retries",
@@ -293,7 +404,13 @@ if __name__ == "__main__":
 
             # Запускаем загрузку
             download_chapters(
-                args.url, book_dir, args.start, args.count, args.retries, args.volume
+                args.url,
+                book_dir,
+                args.start,
+                args.count,
+                args.retries,
+                args.volume,
+                args,
             )
         else:
             # Интерактивный режим
@@ -305,7 +422,7 @@ if __name__ == "__main__":
             book_dir = f"results/{slug}"
 
             # Запускаем загрузку
-            download_chapters(url, book_dir, start_chapter, chapters_count)
+            download_chapters(url, book_dir, start_chapter, chapters_count, args=args)
 
     except KeyboardInterrupt:
         print("\n\n❌ Загрузка прервана пользователем")
