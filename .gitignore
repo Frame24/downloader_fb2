@@ -1,6 +1,11 @@
+# Project specific directories
 output/
 configs/
-results/
+results_chapters/
+results_data/
+results_full/
+temp_fb2_chapters/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
