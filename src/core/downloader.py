@@ -71,9 +71,10 @@ class ChapterDownloader:
     ) -> bool:
         """Сохраняет исходные данные главы"""
         try:
+            # Создаем безопасное имя файла из номера главы
+            safe_chapter_num = str(chapter_info.chapter_num).replace(".", "_")
             raw_file = (
-                Path(raw_dir)
-                / f"{chapter_info.chapter_num:03d}_Том{chapter_info.volume}_"
+                Path(raw_dir) / f"{safe_chapter_num}_Том{chapter_info.volume}_"
                 f"{chapter_info.title}.json"
             )
             with open(raw_file, "w", encoding="utf-8") as f:
@@ -97,9 +98,10 @@ class ChapterDownloader:
             if not fb2_content:
                 return False
 
+            # Создаем безопасное имя файла из номера главы
+            safe_chapter_num = str(chapter_info.chapter_num).replace(".", "_")
             fb2_file = (
-                Path(fb2_dir)
-                / f"{chapter_info.chapter_num:03d}_Том{chapter_info.volume}_"
+                Path(fb2_dir) / f"{safe_chapter_num}_Том{chapter_info.volume}_"
                 f"{chapter_info.title}.fb2"
             )
 
@@ -175,7 +177,6 @@ class ChapterDownloader:
                             continue
                         return False
 
-                print(f"Глава {chapter_info.chapter_num}: {chapter_info.title}")
                 return True
 
             except (ValueError, ConnectionError, TimeoutError, KeyError) as e:
@@ -218,21 +219,46 @@ class ChapterDownloader:
 
         # Фильтруем нужные главы
         target_chapters = []
-        for chapter_num, branch_id, volume in chapters:
+        for chapter_num_str, branch_id, volume in chapters:
+            # Парсим номер главы для сравнения
+            try:
+                if "." in chapter_num_str:
+                    # Для подглав типа "1.1" берем основную часть
+                    chapter_num = int(chapter_num_str.split(".")[0])
+                else:
+                    chapter_num = int(chapter_num_str)
+            except (ValueError, IndexError):
+                continue
+
             if (
                 start_chapter is None
                 or end_chapter is None
                 or (start_chapter <= chapter_num <= end_chapter)
             ):
-                title = f"Глава_{chapter_num}"
+                title = f"Глава_{chapter_num_str}"
                 target_chapters.append(
-                    ChapterInfo(chapter_num, volume, branch_id, title)
+                    ChapterInfo(chapter_num_str, volume, branch_id, title)
                 )
 
         if not target_chapters:
             print("Не найдено глав для скачивания")
             return []
 
+        # Сортируем главы по номеру для правильного порядка
+        def sort_key(chapter_info):
+            # Парсим номер главы для сортировки
+            try:
+                if "." in chapter_info.chapter_num:
+                    # Для подглав типа "1.1" создаем кортеж (1, 1)
+                    parts = chapter_info.chapter_num.split(".")
+                    return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+                else:
+                    # Для обычных глав типа "105"
+                    return (int(chapter_info.chapter_num), 0)
+            except (ValueError, IndexError):
+                return (0, 0)
+
+        target_chapters.sort(key=sort_key)
         print(f"Найдено глав для скачивания: {len(target_chapters)}")
         return target_chapters
 
@@ -275,9 +301,11 @@ class ChapterDownloader:
                     "░" * (50 - int(progress_percent / 2))
                 )
                 print(
-                    f"\rПрогресс: [{progress_bar}] {total}/{len(chapters)} "
-                    f"({progress_percent:.1f}%) | Успешно: {successful} | Ошибок: {failed}",
-                    end="", flush=True
+                    f"\r📖 [{progress_bar}] {total}/{len(chapters)} "
+                    f"({progress_percent:.1f}%) | ✅ {successful} | ❌ {failed} | "
+                    f"Текущая: {chapter.chapter_num}",
+                    end="",
+                    flush=True,
                 )
 
         # Финальный вывод прогресса

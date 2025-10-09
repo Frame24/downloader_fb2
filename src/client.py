@@ -108,21 +108,37 @@ def fetch_chapters_list(slug: str, max_retries: int = 3):
             resp.raise_for_status()
             arr = resp.json().get("data", [])
             result = []
+            seen_chapters = set()  # Для отслеживания уже обработанных глав
+
             for ch in arr:
                 try:
-                    num = int(ch.get("number", ""))
-                except ValueError:
+                    # Парсим номер главы, сохраняя полный номер для API
+                    number_str = ch.get("number", "")
+                    if "." in number_str:
+                        # Для подглав типа "1.1" берем основную часть для группировки
+                        main_num = int(number_str.split(".")[0])
+                        full_number = number_str  # Сохраняем полный номер
+                    else:
+                        main_num = int(number_str)
+                        full_number = number_str
+                except (ValueError, IndexError):
                     continue
+
+                # Пропускаем дубликаты глав по полному номеру
+                if full_number in seen_chapters:
+                    continue
+                seen_chapters.add(full_number)
+
                 branches = ch.get("branches") or []
                 if not branches:
                     continue
-                # Используем id из branches вместо branch_id
-                branch_id = branches[0].get("id")
-                if branch_id is None:
+                # Используем id самой главы, а не ветки
+                chapter_id = ch.get("id")
+                if chapter_id is None:
                     continue
                 # Получаем номер тома
                 volume = ch.get("volume", 1)
-                result.append((num, branch_id, volume))
+                result.append((full_number, chapter_id, volume))
             return sorted(result, key=lambda x: x[0])
         except requests.exceptions.Timeout:
             print(
@@ -161,7 +177,7 @@ def fetch_chapters_list(slug: str, max_retries: int = 3):
 
 
 def fetch_chapter(
-    slug: str, branch_id: int, volume: int, number: int, max_retries: int = 3
+    slug: str, branch_id: int, volume: int, number: str, max_retries: int = 3
 ):
     """
     Возвращает dict с JSON-полем 'data' для одной главы.

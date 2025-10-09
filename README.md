@@ -17,28 +17,57 @@
 
 ## Использование
 
-### Простой способ (рекомендуется)
+### 🎯 Простой способ (рекомендуется)
 
-Запустите `download_book.bat` и следуйте инструкциям.
+**Быстрый запуск:**
+- `start.bat` - полная проверка + простой интерфейс
+- `quick_start.bat` - быстрый запуск интерфейса
+- `cmd_interface.bat` - командная строка
 
-### Командная строка
+**Или через основной батник:**
+- `download_book.bat` - выбор режима работы
+
+### 💻 Командная строка
 
 ```bash
 # Скачать всю книгу
-python console_downloader.py
+python -m src.interface "https://ranobelib.me/ru/book/197421--naega-geimseog-heukgisaga-doiettda"
 
-# Скачать определенные главы
-python main.py "https://ranobelib.me/ru/book/197421--naega-geimseog-heukgisaga-doiettda" --start 1 --end 10 --output output/
+# Скачать главы 15-20
+python -m src.interface "https://ranobelib.me/ru/book/197421--naega-geimseog-heukgisaga-doiettda" --start 15 --end 20
+
+# Только информация о книге
+python -m src.interface "https://ranobelib.me/ru/book/197421--naega-geimseog-heukgisaga-doiettda" --info-only
+
+# С кастомным названием
+python -m src.interface "https://ranobelib.me/ru/book/197421--naega-geimseog-heukgisaga-doiettda" --title "Моя книга"
 ```
 
-### Тестирование
+### 🧪 Тестирование
 
 ```bash
 # Запустить тесты
-python -m pytest tests/test_main.py -v
-
-# Или через батник
 run_tests.bat
+
+# Или напрямую
+python -c "from tests.test_main import TestProject; t = TestProject(); t.test_api_accessibility()"
+```
+
+### 🔧 Программный API
+
+```python
+from src.interface import BookDownloader
+
+# Создаем загрузчик
+downloader = BookDownloader(max_workers=5)
+
+# Получаем информацию о книге
+info = downloader.get_book_info("https://ranobelib.me/ru/book/197421--naega-geimseog-heukgisaga-doiettda")
+print(f"Книга: {info.title}, глав: {info.total_chapters}")
+
+# Скачиваем главы 1-5
+result = downloader.full_download("https://ranobelib.me/ru/book/197421--naega-geimseog-heukgisaga-doiettda", start=1, end=5)
+print(f"Скачано: {result.successful} глав")
 ```
 
 ## Структура проекта

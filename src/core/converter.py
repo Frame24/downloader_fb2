@@ -9,6 +9,7 @@ import json
 import re
 import shutil
 import sys
+from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
 
@@ -26,15 +27,20 @@ class DataConverter:
         self.converted_count = 0
         self.failed_count = 0
 
-    def _parse_filename(self, filename: str) -> Optional[Tuple[int, int, str]]:
+    def _parse_filename(self, filename: str) -> Optional[Tuple[str, int, str]]:
         """Парсит имя файла и извлекает номер главы, том и название"""
-        match = re.match(r"(\d+)_Том(\d+)_(.+)\.(json|fb2)", filename)
+        # Поддерживаем форматы: 1_1_Том1_Глава_1.1 и 001_Том1_Глава_1
+        match = re.match(r"([^_]+(?:_[^_]+)*)_Том(\d+)_(.+)\.(json|fb2)", filename)
         if not match:
             return None
 
-        chapter_num = int(match.group(1))
+        chapter_num_str = match.group(1)
         volume = int(match.group(2))
         chapter_name = match.group(3)
+
+        # Преобразуем номер главы обратно в исходный формат (заменяем _ на .)
+        chapter_num = chapter_num_str.replace("_", ".")
+
         return chapter_num, volume, chapter_name
 
     def _ensure_output_dir(self, output_dir: str, subdir: str) -> Path:
@@ -108,7 +114,8 @@ class DataConverter:
                     continue
 
                 # Сохраняем FB2
-                fb2_filename = f"{chapter_num:03d}_Том{volume}_{chapter_name}.fb2"
+                safe_chapter_num = str(chapter_num).replace(".", "_")
+                fb2_filename = f"{safe_chapter_num}_Том{volume}_{chapter_name}.fb2"
                 fb2_path = fb2_dir / fb2_filename
 
                 if self._save_fb2_file(fb2_content, fb2_path):
@@ -126,7 +133,11 @@ class DataConverter:
         return self.converted_count, self.failed_count
 
     def convert_fb2_to_merged_book(
-        self, fb2_chapters_dir: str, output_dir: str, book_title: str
+        self,
+        fb2_chapters_dir: str,
+        output_dir: str,
+        book_title: str,
+        cleanup_individual_files: bool = True,
     ) -> bool:
         """Объединяет отдельные FB2 главы в одну книгу"""
         print(f"📚 Объединяем главы в книгу: {book_title}")
@@ -153,17 +164,52 @@ class DataConverter:
                 "description": f"Книга '{book_title}' - объединенные главы",
             }
 
-            # Объединяем главы
-            output_file = merge_chapters_to_book(str(fb2_path), book_info)
+            # Создаем имя файла для объединенной книги
+            book_name = book_info.get("display_name", book_info.get("name", "Книга"))
+            safe_name = "".join(
+                c for c in book_name if c.isalnum() or c in " -_"
+            ).rstrip()
+            current_time = datetime.now()
+            time_str = current_time.strftime("%Y-%m-%d_%H-%M-%S")
+            final_filename = f"{safe_name}_{time_str}.fb2"
+            final_path = Path(output_dir) / final_filename
 
-            # Перемещаем файл в output_dir если нужно
-            if output_file and output_dir:
-                final_path = Path(output_dir) / Path(output_file).name
-                shutil.move(output_file, final_path)
-                output_file = str(final_path)
+            # Объединяем главы напрямую в нужную папку
+            output_file = merge_chapters_to_book(
+                str(fb2_path), book_info, str(final_path)
+            )
 
             if output_file:
                 print(f"✅ Книга успешно создана: {output_file}")
+
+                # Удаляем отдельные FB2 файлы если нужно
+                if cleanup_individual_files:
+                    print("🧹 Удаляем отдельные FB2 файлы...")
+                    for fb2_file in fb2_files:
+                        try:
+                            fb2_file.unlink()
+                            print(f"   🗑️  Удален: {fb2_file.name}")
+                        except OSError as e:
+                            print(f"   ⚠️  Не удалось удалить {fb2_file.name}: {e}")
+
+                    # Удаляем папку fb2_chapters если она пустая
+                    try:
+                        if fb2_path.exists():
+                            # Используем shutil.rmtree для надежного удаления
+                            shutil.rmtree(fb2_path)
+                            print("   🗑️  Удалена папка fb2_chapters")
+                    except OSError:
+                        pass  # Игнорируем ошибки удаления папки
+
+                    # Также удаляем вложенную папку fb2_chapters если она есть
+                    nested_fb2_path = fb2_path / "fb2_chapters"
+                    if nested_fb2_path.exists():
+                        try:
+                            shutil.rmtree(nested_fb2_path)
+                            print("   🗑️  Удалена вложенная папка fb2_chapters")
+                        except OSError:
+                            pass
+
                 return True
             print("❌ Не удалось создать объединенную книгу")
             return False

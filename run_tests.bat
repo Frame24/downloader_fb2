@@ -40,8 +40,8 @@ echo.
 REM Выбор типа тестов
 echo Выберите тип тестов:
 echo 1. Быстрые тесты (API доступность)
-echo 2. Полные интеграционные тесты
-echo 3. Все тесты проекта
+echo 2. Тесты программного API
+echo 3. Полные интеграционные тесты
 echo 4. Тест конкретной книги
 echo.
 set /p choice="Введите номер (1-4): "
@@ -52,19 +52,19 @@ if "%choice%"=="1" (
     python -c "from tests.test_main import TestProject; t = TestProject(); t.test_api_accessibility(); t.test_url_parsing(); t.test_book_info_retrieval(); print('✅ Быстрые тесты пройдены!')"
 ) else if "%choice%"=="2" (
     echo.
-    echo Запускаем интеграционные тесты...
-    python -c "from tests.test_main import TestProject; t = TestProject(); t.test_api_accessibility(); t.test_url_parsing(); t.test_book_info_retrieval(); t.test_chapters_list_retrieval(); print('✅ Интеграционные тесты пройдены!')"
+    echo Запускаем тесты программного API...
+    python -c "from tests.test_interface import TestBookDownloaderAPI; t = TestBookDownloaderAPI(); t.test_get_book_info(t.downloader(t.temp_dir())); t.test_downloader_configuration(); print('✅ Тесты API пройдены!')"
 ) else if "%choice%"=="3" (
     echo.
-    echo Запускаем все тесты...
-    python -c "from tests.test_main import TestProject; t = TestProject(); t.test_api_accessibility(); t.test_url_parsing(); t.test_book_info_retrieval(); t.test_chapters_list_retrieval(); print('✅ Все тесты пройдены!')"
+    echo Запускаем полные интеграционные тесты...
+    python -c "from tests.test_main import TestProject; t = TestProject(); t.test_api_accessibility(); t.test_url_parsing(); t.test_book_info_retrieval(); t.test_chapters_list_retrieval(); print('✅ Интеграционные тесты пройдены!')"
 ) else if "%choice%"=="4" (
     echo.
     echo Тест конкретной книги
     set /p book_url="Введите URL книги: "
     echo.
     echo Тестируем книгу: %book_url%
-    python -c "import sys; sys.path.insert(0, 'src'); from src.client import extract_info, fetch_book_info; slug, _, _, _ = extract_info('%book_url%'); info = fetch_book_info(slug); print('Книга:', info.get('display_name', 'Неизвестно')); print('Глав:', info.get('chapters_count', 0))"
+    python -c "import sys; sys.path.insert(0, 'src'); from src.interface import BookDownloader; d = BookDownloader(); info = d.get_book_info('%book_url%'); print('Книга:', info.title); print('Глав:', info.total_chapters)"
 ) else (
     echo.
     echo Неверный выбор, запускаем быстрые тесты...
