@@ -65,10 +65,14 @@ def download_chapters():
     
     try:
         start = int(input("📖 Начальная глава: "))
-        end = int(input("📖 Конечная глава: "))
+        end = int(input("📖 Конечная глава (включительно): "))
+        
+        if start > end:
+            print("❌ Начальная глава не может быть больше конечной")
+            return
         
         downloader = BookDownloader()
-        print(f"🚀 Скачиваем главы {start}-{end}...")
+        print(f"🚀 Скачиваем главы {start}-{end} (включительно)...")
         result = downloader.full_download(url, start, end)
         
         print(f"\n✅ Готово!")

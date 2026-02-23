@@ -335,7 +335,27 @@ def build_fb2(data, book_info=None, volume=None, chapter_number=None):
 
     raw = ET.tostring(fb2, encoding="utf-8")
     pretty = minidom.parseString(raw)
-    return pretty.toprettyxml(indent="  ", encoding="utf-8")
+    pretty_xml = pretty.toprettyxml(indent="  ", encoding="utf-8")
+    
+    # Убираем лишние пустые строки между тегами <p>
+    if isinstance(pretty_xml, bytes):
+        # Убираем две или более пустых строки между </p> и следующим <p>
+        pretty_xml = re.sub(rb"</p>\s*\n\s*\n+(\s*)<p>", rb"</p>\n\1<p>", pretty_xml)
+        # Убираем две или более пустых строки между любым закрывающим тегом и <p>
+        pretty_xml = re.sub(rb">\s*\n\s*\n+(\s*)<p>", rb">\n\1<p>", pretty_xml)
+        # Убираем множественные пустые строки подряд (3 и более)
+        while b"\n\n\n" in pretty_xml:
+            pretty_xml = pretty_xml.replace(b"\n\n\n", b"\n\n")
+    else:
+        # Убираем две или более пустых строки между </p> и следующим <p>
+        pretty_xml = re.sub(r"</p>\s*\n\s*\n+(\s*)<p>", r"</p>\n\1<p>", pretty_xml)
+        # Убираем две или более пустых строки между любым закрывающим тегом и <p>
+        pretty_xml = re.sub(r">\s*\n\s*\n+(\s*)<p>", r">\n\1<p>", pretty_xml)
+        # Убираем множественные пустые строки подряд (3 и более)
+        while "\n\n\n" in pretty_xml:
+            pretty_xml = pretty_xml.replace("\n\n\n", "\n\n")
+    
+    return pretty_xml
 
 
 def deep_copy_element(source_element, target_parent):
@@ -389,126 +409,165 @@ def merge_chapters_to_book(book_dir: str, book_info: dict, output_file: str = No
         print("❌ FB2 файлы глав не найдены!")
         return None
 
-    # Сортируем файлы по номеру главы
-    def extract_chapter_number(filename: str) -> int:
-        match = re.match(r"(\d+)", filename)
-        if match:
-            return int(match.group(1))
-        return 0
+    # Сортируем файлы по номеру главы с учетом подглав
+    def extract_chapter_number(filename: str):
+        # Извлекаем номер главы из имени файла (формат: "1_Том1_..." или "1.1_Том1_...")
+        match = re.match(r"([\d.]+)", filename)
+        if not match:
+            return (0, 0)
+
+        chapter_str = match.group(1)
+        if "." in chapter_str:
+            # Для подглав типа "1.1" создаем кортеж (1, 1)
+            parts = chapter_str.split(".")
+            try:
+                return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+            except (ValueError, IndexError):
+                return (0, 0)
+        else:
+            # Для обычных глав типа "105"
+            try:
+                return (int(chapter_str), 0)
+            except ValueError:
+                return (0, 0)
 
     fb2_files.sort(key=extract_chapter_number)
-    print(f"📊 Найдено глав для объединения: {len(fb2_files)}")
+    total_chapters = len(fb2_files)
+    print(f"📊 Найдено глав для объединения: {total_chapters}")
 
-    # Генерируем имя выходного файла, если не указано
+    # Генерируем базовое имя выходного файла, если не указано
     if output_file is None:
         book_name = book_info.get("display_name", book_info.get("name", "Книга"))
-        # Очищаем название от недопустимых символов для имени файла
         safe_name = "".join(c for c in book_name if c.isalnum() or c in " -_").rstrip()
-
-        # Добавляем дату и время скачивания
         current_time = datetime.now()
         time_str = current_time.strftime("%Y-%m-%d_%H-%M-%S")
-
-        # Сохраняем в папку results/ вместо book_dir
         results_dir = "results"
         os.makedirs(results_dir, exist_ok=True)
-        output_file = os.path.join(results_dir, f"{safe_name}_{time_str}.fb2")
+        base_output = os.path.join(results_dir, f"{safe_name}_{time_str}.fb2")
+    else:
+        base_output = output_file
 
-    # Создаем корневой элемент
-    root = ET.Element("FictionBook")
-    root.set("xmlns:l", "http://www.w3.org/1999/xlink")
+    # Разбиваем на части по 400 глав максимум
+    max_per_book = 400
+    chunks = [
+        fb2_files[i : i + max_per_book] for i in range(0, total_chapters, max_per_book)
+    ]
 
-    # Создаем description
-    description = ET.SubElement(root, "description")
-    title_info = ET.SubElement(description, "title-info")
+    created_files = []
 
-    # Название книги
-    book_title = ET.SubElement(title_info, "book-title")
-    book_title.text = book_info.get(
-        "display_name", book_info.get("name", "Без названия")
-    )
+    for idx, chunk in enumerate(chunks, start=1):
+        # Определяем имя файла для части
+        if len(chunks) == 1:
+            part_output = base_output
+            print("📦 Объединяем в одну книгу (глав ≤ 400)")
+        else:
+            base, ext = os.path.splitext(base_output)
+            part_output = f"{base}_Часть{idx}{ext}"
+            print(f"📦 Объединяем часть {idx}/{len(chunks)} (глав: {len(chunk)})")
 
-    # Жанр
-    genre = ET.SubElement(title_info, "genre")
-    genre.text = "ranobe"
+        # Создаем корневой элемент
+        root = ET.Element("FictionBook")
+        root.set("xmlns:l", "http://www.w3.org/1999/xlink")
 
-    # Дата
-    date = ET.SubElement(title_info, "date")
-    current_time = datetime.now()
-    date.text = current_time.strftime("%Y-%m-%d")
+        # Создаем description
+        description = ET.SubElement(root, "description")
+        title_info = ET.SubElement(description, "title-info")
 
-    # Язык
-    lang = ET.SubElement(title_info, "lang")
-    lang.text = "ru"
+        # Название книги (если частей несколько — добавляем номер части)
+        book_title = ET.SubElement(title_info, "book-title")
+        base_title = book_info.get(
+            "display_name", book_info.get("name", "Без названия")
+        )
+        if len(chunks) == 1:
+            book_title.text = base_title
+        else:
+            book_title.text = f"{base_title} (Часть {idx})"
 
-    # Описание книги (если есть)
-    if book_info.get("description"):
-        annotation = ET.SubElement(title_info, "annotation")
-        p = ET.SubElement(annotation, "p")
-        p.text = book_info.get("description")
+        # Жанр
+        genre = ET.SubElement(title_info, "genre")
+        genre.text = "ranobe"
 
-    # Создаем body
-    body = ET.SubElement(root, "body")
+        # Дата
+        date = ET.SubElement(title_info, "date")
+        current_time = datetime.now()
+        date.text = current_time.strftime("%Y-%m-%d")
 
-    # Обрабатываем каждую главу
-    for i, filename in enumerate(fb2_files, 1):
-        print(f"  📄 [{i}/{len(fb2_files)}] Обрабатываем: {filename}")
+        # Язык
+        lang = ET.SubElement(title_info, "lang")
+        lang.text = "ru"
 
-        filepath = os.path.join(book_dir, filename)
+        # Описание книги (если есть)
+        if book_info.get("description"):
+            annotation = ET.SubElement(title_info, "annotation")
+            p = ET.SubElement(annotation, "p")
+            if len(chunks) == 1:
+                p.text = book_info.get("description")
+            else:
+                p.text = f"{book_info.get('description')} (Часть {idx} из {len(chunks)})"
 
-        try:
-            # Парсим FB2 файл главы
-            tree = ET.parse(filepath)
-            chapter_root = tree.getroot()
+        # Создаем body
+        body = ET.SubElement(root, "body")
 
-            # Находим секцию с контентом
-            chapter_body = chapter_root.find(".//body")
-            if chapter_body is not None:
-                chapter_section = chapter_body.find("section")
-                if chapter_section is not None:
-                    # Копируем section в новый body
-                    new_section = ET.SubElement(body, "section")
+        # Обрабатываем каждую главу части
+        for i, filename in enumerate(chunk, 1):
+            print(f"  📄 [{i}/{len(chunk)}] Обрабатываем: {filename}")
 
-                    # Копируем все элементы из секции главы с помощью надежной функции
-                    for element in chapter_section:
-                        deep_copy_element(element, new_section)
+            filepath = os.path.join(book_dir, filename)
 
-                    # Добавляем разделитель между главами (кроме последней)
-                    if i < len(fb2_files):
-                        separator = ET.SubElement(body, "section")
-                        separator.set("id", f"separator_{i}")
+            try:
+                # Парсим FB2 файл главы
+                tree = ET.parse(filepath)
+                chapter_root = tree.getroot()
 
-                        # Добавляем заголовок-разделитель с номером главы
-                        separator_title = ET.SubElement(separator, "title")
-                        separator_title.text = f"Глава {i} завершена"
+                # Находим секцию с контентом
+                chapter_body = chapter_root.find(".//body")
+                if chapter_body is not None:
+                    chapter_section = chapter_body.find("section")
+                    if chapter_section is not None:
+                        # Копируем section в новый body
+                        new_section = ET.SubElement(body, "section")
 
-                        # Добавляем декоративную линию
-                        decorative_line = ET.SubElement(separator, "p")
-                        decorative_line.text = "—" * 50
+                        # Копируем все элементы из секции главы
+                        for element in chapter_section:
+                            deep_copy_element(element, new_section)
 
-                        # Добавляем пустую строку как разделитель
-                        empty_p = ET.SubElement(separator, "p")
-                        empty_p.text = ""
+            except Exception as e:
+                print(f"    ❌ Ошибка при обработке {filename}: {e}")
+                continue
 
-        except Exception as e:
-            print(f"    ❌ Ошибка при обработке {filename}: {e}")
-            continue
+        # Форматируем и сохраняем объединенный файл
+        print("💾 Сохраняем объединенную книгу...")
 
-    # Форматируем и сохраняем объединенный файл
-    print("💾 Сохраняем объединенную книгу...")
+        rough_string = ET.tostring(root, encoding="utf-8")
+        reparsed = minidom.parseString(rough_string)
+        pretty_xml = reparsed.toprettyxml(indent="  ", encoding="utf-8")
 
-    # Создаем красивый XML
-    rough_string = ET.tostring(root, encoding="utf-8")
-    reparsed = minidom.parseString(rough_string)
-    pretty_xml = reparsed.toprettyxml(indent="  ", encoding="utf-8")
+        # Убираем лишние пустые строки между тегами <p>
+        if isinstance(pretty_xml, bytes):
+            pretty_xml = re.sub(
+                rb"</p>\s*\n\s*\n+(\s*)<p>", rb"</p>\n\1<p>", pretty_xml
+            )
+            pretty_xml = re.sub(
+                rb">\s*\n\s*\n+(\s*)<p>", rb">\n\1<p>", pretty_xml
+            )
+            while b"\n\n\n" in pretty_xml:
+                pretty_xml = pretty_xml.replace(b"\n\n\n", b"\n\n")
+        else:
+            pretty_xml = re.sub(
+                r"</p>\s*\n\s*\n+(\s*)<p>", r"</p>\n\1<p>", pretty_xml
+            )
+            pretty_xml = re.sub(
+                r">\s*\n\s*\n+(\s*)<p>", r">\n\1<p>", pretty_xml
+            )
+            while "\n\n\n" in pretty_xml:
+                pretty_xml = pretty_xml.replace("\n\n\n", "\n\n")
 
-    # Убираем лишние пустые строки
-    pretty_xml = pretty_xml.replace(b"\n\n", b"\n")
+        with open(part_output, "wb") as f:
+            f.write(pretty_xml)
 
-    with open(output_file, "wb") as f:
-        f.write(pretty_xml)
+        print(f"✅ Объединенная книга сохранена: {part_output}")
+        print(f"📊 Всего глав объединено в части: {len(chunk)}")
+        created_files.append(part_output)
 
-    print(f"✅ Объединенная книга сохранена: {output_file}")
-    print(f"📊 Всего глав объединено: {len(fb2_files)}")
-
-    return output_file
+    # Для обратной совместимости возвращаем первый файл
+    return created_files[0] if created_files else None

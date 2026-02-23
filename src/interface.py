@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from .core.downloader import ChapterDownloader, DownloadConfig
 from .core.converter import DataConverter
 from .client import extract_info, fetch_book_info, fetch_chapters_list
+from .utils.cookies import get_browser_cookies, cookies_to_dict
 
 
 @dataclass
@@ -39,19 +40,20 @@ class BookInfo:
 class BookDownloader:
     """Основной класс для скачивания книг"""
     
-    def __init__(self, max_workers: int = 2, output_base: str = "output"):
+    def __init__(self, max_workers: int = 2, output_base: str = "output", cookies: Optional[Dict[str, str]] = None):
         self.max_workers = max_workers
         self.output_base = output_base
         self.config = DownloadConfig(max_workers=max_workers)
-        self.downloader = ChapterDownloader(self.config)
+        self.downloader = ChapterDownloader(self.config, cookies=cookies)
         self.converter = DataConverter()
+        self.cookies = cookies
     
     def get_book_info(self, url: str) -> BookInfo:
         """Получает информацию о книге"""
         try:
             slug, _, _, _ = extract_info(url)
-            book_data = fetch_book_info(slug)
-            chapters = fetch_chapters_list(slug)
+            book_data = fetch_book_info(slug, cookies=self.cookies)
+            chapters = fetch_chapters_list(slug, cookies=self.cookies)
             
             return BookInfo(
                 title=book_data.get("display_name", f"Книга_{slug}"),
@@ -135,7 +137,7 @@ def create_cli_parser() -> argparse.ArgumentParser:
   # Скачать всю книгу
   python -m src.interface "https://ranobelib.me/ru/book/197421--naega-geimseog-heukgisaga-doiettda"
 
-  # Скачать главы 15-20
+  # Скачать главы 15-20 включительно
   python -m src.interface "https://ranobelib.me/ru/book/197421--naega-geimseog-heukgisaga-doiettda" --start 15 --end 20
 
   # Скачать с кастомным названием
@@ -147,14 +149,16 @@ def create_cli_parser() -> argparse.ArgumentParser:
     )
     
     parser.add_argument("url", help="URL книги на ranobelib.me")
-    parser.add_argument("--start", type=int, help="Начальная глава")
-    parser.add_argument("--end", type=int, help="Конечная глава")
+    parser.add_argument("--start", type=int, help="Начальная глава (включительно)")
+    parser.add_argument("--end", type=int, help="Конечная глава (включительно)")
     parser.add_argument("--title", help="Название книги")
     parser.add_argument("--workers", type=int, default=2, help="Количество потоков")
     parser.add_argument("--output", default="output", help="Базовая папка для сохранения")
     parser.add_argument("--info-only", action="store_true", help="Только показать информацию о книге")
     parser.add_argument("--no-convert", action="store_true", help="Не конвертировать в FB2")
     parser.add_argument("--keep-chapters", action="store_true", help="Сохранить отдельные FB2 главы")
+    parser.add_argument("--cookies", choices=["chrome", "firefox", "edge", "opera"], 
+                       help="Использовать cookies из браузера для доступа к 18+ главам")
     
     return parser
 
@@ -165,7 +169,22 @@ def main():
     args = parser.parse_args()
     
     try:
-        downloader = BookDownloader(max_workers=args.workers, output_base=args.output)
+        # Валидация диапазона глав
+        if args.start is not None and args.end is not None and args.start > args.end:
+            print(f"❌ Ошибка: Начальная глава ({args.start}) не может быть больше конечной ({args.end})")
+            sys.exit(1)
+        
+        # Получаем cookies из браузера, если указано
+        cookies = None
+        if args.cookies:
+            print(f"🔐 Извлекаем cookies из {args.cookies}...")
+            cookie_jar = get_browser_cookies(domain="ranobelib.me", browser=args.cookies)
+            if cookie_jar:
+                cookies = cookies_to_dict(cookie_jar)
+            else:
+                print("⚠️  Продолжаем без cookies. 18+ главы могут быть недоступны.")
+        
+        downloader = BookDownloader(max_workers=args.workers, output_base=args.output, cookies=cookies)
         
         if args.info_only:
             # Только информация о книге

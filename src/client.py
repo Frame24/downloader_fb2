@@ -1,8 +1,7 @@
 import re
 import time
 import requests
-import sys
-import os
+from typing import Optional, Dict
 
 # Настройка кодировки для Windows консоли
 from .utils.encoding import setup_console_encoding
@@ -34,15 +33,24 @@ def extract_info(url: str):
     raise ValueError(f"URL не распознан: {url}")
 
 
-def fetch_book_info(slug: str, max_retries: int = 3):
+def fetch_book_info(slug: str, max_retries: int = 3, cookies: Optional[Dict[str, str]] = None):
     """
     Возвращает информацию о книге (название, описание и т.д.).
     Получает информацию из списка глав, так как прямой endpoint не работает.
+    
+    Args:
+        slug: Slug книги
+        max_retries: Максимальное количество попыток
+        cookies: Словарь с cookies для авторизации (опционально)
     """
     for attempt in range(max_retries):
         try:
             # Получаем информацию из списка глав
-            resp = requests.get(f"{API_BASE}/{slug}/chapters", timeout=TIMEOUT)
+            resp = requests.get(
+                f"{API_BASE}/{slug}/chapters",
+                timeout=TIMEOUT,
+                cookies=cookies
+            )
             resp.raise_for_status()
             chapters_data = resp.json().get("data", [])
 
@@ -98,13 +106,22 @@ def fetch_book_info(slug: str, max_retries: int = 3):
     return {}
 
 
-def fetch_chapters_list(slug: str, max_retries: int = 3):
+def fetch_chapters_list(slug: str, max_retries: int = 3, cookies: Optional[Dict[str, str]] = None):
     """
     Возвращает список (номер, branch_id, volume) для всех глав.
+    
+    Args:
+        slug: Slug книги
+        max_retries: Максимальное количество попыток
+        cookies: Словарь с cookies для авторизации (опционально)
     """
     for attempt in range(max_retries):
         try:
-            resp = requests.get(f"{API_BASE}/{slug}/chapters", timeout=TIMEOUT)
+            resp = requests.get(
+                f"{API_BASE}/{slug}/chapters",
+                timeout=TIMEOUT,
+                cookies=cookies
+            )
             resp.raise_for_status()
             arr = resp.json().get("data", [])
             result = []
@@ -116,18 +133,20 @@ def fetch_chapters_list(slug: str, max_retries: int = 3):
                     number_str = ch.get("number", "")
                     if "." in number_str:
                         # Для подглав типа "1.1" берем основную часть для группировки
-                        main_num = int(number_str.split(".")[0])
                         full_number = number_str  # Сохраняем полный номер
                     else:
-                        main_num = int(number_str)
                         full_number = number_str
                 except (ValueError, IndexError):
                     continue
 
-                # Пропускаем дубликаты глав по полному номеру
-                if full_number in seen_chapters:
+                # Получаем номер тома
+                volume = int(ch.get("volume", 1))
+
+                # Пропускаем дубликаты глав по комбинации том + полный номер
+                chapter_key = f"{volume}_{full_number}"
+                if chapter_key in seen_chapters:
                     continue
-                seen_chapters.add(full_number)
+                seen_chapters.add(chapter_key)
 
                 branches = ch.get("branches") or []
                 if not branches:
@@ -136,10 +155,9 @@ def fetch_chapters_list(slug: str, max_retries: int = 3):
                 chapter_id = ch.get("id")
                 if chapter_id is None:
                     continue
-                # Получаем номер тома
-                volume = ch.get("volume", 1)
+
                 result.append((full_number, chapter_id, volume))
-            return sorted(result, key=lambda x: x[0])
+            return sorted(result, key=lambda x: (x[2], x[0]))  # Сортировка по тому, затем по номеру
         except requests.exceptions.Timeout:
             print(
                 f"  Таймаут при получении списка глав (попытка {attempt + 1}/{max_retries})"
@@ -177,17 +195,31 @@ def fetch_chapters_list(slug: str, max_retries: int = 3):
 
 
 def fetch_chapter(
-    slug: str, branch_id: int, volume: int, number: str, max_retries: int = 3
+    slug: str, volume: int, number: str, max_retries: int = 3,
+    cookies: Optional[Dict[str, str]] = None, branch_id: Optional[int] = None
 ):
     """
     Возвращает dict с JSON-полем 'data' для одной главы.
+    
+    Args:
+        slug: Slug книги
+        volume: Номер тома
+        number: Номер главы
+        max_retries: Максимальное количество попыток
+        cookies: Словарь с cookies для авторизации (опционально)
+        branch_id: ID ветки главы (опционально, не требуется для некоторых книг)
     """
     for attempt in range(max_retries):
         try:
+            params = {"volume": volume, "number": number}
+            if branch_id is not None:
+                params["branch_id"] = branch_id
+            
             resp = requests.get(
                 f"{API_BASE}/{slug}/chapter",
-                params={"branch_id": branch_id, "volume": volume, "number": number},
+                params=params,
                 timeout=TIMEOUT,
+                cookies=cookies
             )
             resp.raise_for_status()
             return resp.json().get("data", {})

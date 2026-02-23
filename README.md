@@ -9,6 +9,7 @@
 - Скачивание отдельных глав или диапазонов
 - Многопоточное скачивание
 - Автоматическое создание структуры папок
+- Поддержка 18+ глав через cookies из браузера
 
 ## Установка
 
@@ -35,6 +36,9 @@ python -m src.interface "https://ranobelib.me/ru/book/197421--naega-geimseog-heu
 
 # Скачать главы 15-20
 python -m src.interface "https://ranobelib.me/ru/book/197421--naega-geimseog-heukgisaga-doiettda" --start 15 --end 20
+
+# Скачать с использованием cookies из Chrome (для 18+ глав)
+python -m src.interface "https://ranobelib.me/ru/book/177465--changjiacmul-sogro" --cookies chrome
 
 # Только информация о книге
 python -m src.interface "https://ranobelib.me/ru/book/197421--naega-geimseog-heukgisaga-doiettda" --info-only
@@ -89,6 +93,27 @@ src/
 - Python 3.8+
 - requests
 - click
+- browser-cookie3 (для поддержки 18+ глав через cookies)
+
+## Поддержка 18+ глав
+
+Для скачивания 18+ глав необходимо использовать cookies из браузера, где вы уже авторизованы:
+
+```bash
+# Использовать cookies из Chrome
+python -m src.interface "URL_книги" --cookies chrome
+
+# Использовать cookies из Firefox
+python -m src.interface "URL_книги" --cookies firefox
+
+# Использовать cookies из Edge
+python -m src.interface "URL_книги" --cookies edge
+
+# Использовать cookies из Opera
+python -m src.interface "URL_книги" --cookies opera
+```
+
+**Важно:** Перед использованием убедитесь, что вы авторизованы в браузере на сайте ranobelib.me. Браузер должен быть закрыт во время извлечения cookies.
 
 ## Лицензия
 
