@@ -16,6 +16,7 @@ from .core.downloader import ChapterDownloader, DownloadConfig
 from .core.converter import DataConverter
 from .client import extract_info, fetch_book_info, fetch_chapters_list
 from .utils.cookies import get_browser_cookies, cookies_to_dict
+from .utils.auth import load_auth_token, save_auth_token
 
 
 @dataclass
@@ -40,20 +41,27 @@ class BookInfo:
 class BookDownloader:
     """Основной класс для скачивания книг"""
     
-    def __init__(self, max_workers: int = 2, output_base: str = "output", cookies: Optional[Dict[str, str]] = None):
+    def __init__(
+        self,
+        max_workers: int = 2,
+        output_base: str = "output",
+        cookies: Optional[Dict[str, str]] = None,
+        auth_token: Optional[str] = None,
+    ):
         self.max_workers = max_workers
         self.output_base = output_base
         self.config = DownloadConfig(max_workers=max_workers)
-        self.downloader = ChapterDownloader(self.config, cookies=cookies)
+        self.downloader = ChapterDownloader(self.config, cookies=cookies, auth_token=auth_token)
         self.converter = DataConverter()
         self.cookies = cookies
+        self.auth_token = auth_token
     
     def get_book_info(self, url: str) -> BookInfo:
         """Получает информацию о книге"""
         try:
             slug, _, _, _ = extract_info(url)
-            book_data = fetch_book_info(slug, cookies=self.cookies)
-            chapters = fetch_chapters_list(slug, cookies=self.cookies)
+            book_data = fetch_book_info(slug, cookies=self.cookies, auth_token=self.auth_token)
+            chapters = fetch_chapters_list(slug, cookies=self.cookies, auth_token=self.auth_token)
             
             return BookInfo(
                 title=book_data.get("display_name", f"Книга_{slug}"),
@@ -159,6 +167,7 @@ def create_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--keep-chapters", action="store_true", help="Сохранить отдельные FB2 главы")
     parser.add_argument("--cookies", choices=["chrome", "firefox", "edge", "opera"], 
                        help="Использовать cookies из браузера для доступа к 18+ главам")
+    parser.add_argument("--auth-token", help="Bearer токен для авторизации в API")
     
     return parser
 
@@ -183,8 +192,17 @@ def main():
                 cookies = cookies_to_dict(cookie_jar)
             else:
                 print("⚠️  Продолжаем без cookies. 18+ главы могут быть недоступны.")
-        
-        downloader = BookDownloader(max_workers=args.workers, output_base=args.output, cookies=cookies)
+
+        auth_token = args.auth_token or load_auth_token()
+        if args.auth_token:
+            save_auth_token(args.auth_token)
+
+        downloader = BookDownloader(
+            max_workers=args.workers,
+            output_base=args.output,
+            cookies=cookies,
+            auth_token=auth_token,
+        )
         
         if args.info_only:
             # Только информация о книге

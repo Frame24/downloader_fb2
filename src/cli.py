@@ -11,6 +11,7 @@ from typing import Optional, Dict
 from .core.downloader import ChapterDownloader, DownloadConfig
 from .client import extract_info
 from .utils.cookies import get_browser_cookies, cookies_to_dict
+from .utils.auth import load_auth_token, save_auth_token
 
 
 def main():
@@ -21,8 +22,12 @@ def main():
     parser.add_argument("--end", type=int, help="Конечная глава (включительно)")
     parser.add_argument("--full", action="store_true", help="Скачать всю книгу")
     parser.add_argument("--output", default="output", help="Папка для сохранения")
-    parser.add_argument("--cookies", choices=["chrome", "firefox", "edge", "opera"],
-                       help="Использовать cookies из браузера для доступа к 18+ главам")
+    parser.add_argument(
+        "--cookies",
+        choices=["chrome", "firefox", "edge", "opera"],
+        help="Использовать cookies из браузера для доступа к 18+ главам",
+    )
+    parser.add_argument("--auth-token", help="Bearer токен для авторизации в API")
 
     args = parser.parse_args()
 
@@ -39,9 +44,13 @@ def main():
     # Извлекаем slug из URL
     slug, _, _, _ = extract_info(args.url)
 
+    auth_token = args.auth_token or load_auth_token()
+    if args.auth_token:
+        save_auth_token(args.auth_token)
+
     # Настройки скачивания
     config = DownloadConfig(max_workers=5)
-    downloader = ChapterDownloader(config, cookies=cookies)
+    downloader = ChapterDownloader(config, cookies=cookies, auth_token=auth_token)
 
     if args.full:
         # Скачиваем всю книгу

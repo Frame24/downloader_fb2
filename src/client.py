@@ -33,23 +33,27 @@ def extract_info(url: str):
     raise ValueError(f"URL не распознан: {url}")
 
 
-def fetch_book_info(slug: str, max_retries: int = 3, cookies: Optional[Dict[str, str]] = None):
+def fetch_book_info(
+    slug: str,
+    max_retries: int = 3,
+    cookies: Optional[Dict[str, str]] = None,
+    auth_token: Optional[str] = None,
+):
     """
     Возвращает информацию о книге (название, описание и т.д.).
     Получает информацию из списка глав, так как прямой endpoint не работает.
-    
-    Args:
-        slug: Slug книги
-        max_retries: Максимальное количество попыток
-        cookies: Словарь с cookies для авторизации (опционально)
     """
+    headers = None
+    if auth_token:
+        headers = {"Authorization": f"Bearer {auth_token}"}
+
     for attempt in range(max_retries):
         try:
-            # Получаем информацию из списка глав
             resp = requests.get(
                 f"{API_BASE}/{slug}/chapters",
                 timeout=TIMEOUT,
-                cookies=cookies
+                cookies=cookies,
+                headers=headers,
             )
             resp.raise_for_status()
             chapters_data = resp.json().get("data", [])
@@ -106,21 +110,26 @@ def fetch_book_info(slug: str, max_retries: int = 3, cookies: Optional[Dict[str,
     return {}
 
 
-def fetch_chapters_list(slug: str, max_retries: int = 3, cookies: Optional[Dict[str, str]] = None):
+def fetch_chapters_list(
+    slug: str,
+    max_retries: int = 3,
+    cookies: Optional[Dict[str, str]] = None,
+    auth_token: Optional[str] = None,
+):
     """
     Возвращает список (номер, branch_id, volume) для всех глав.
-    
-    Args:
-        slug: Slug книги
-        max_retries: Максимальное количество попыток
-        cookies: Словарь с cookies для авторизации (опционально)
     """
+    headers = None
+    if auth_token:
+        headers = {"Authorization": f"Bearer {auth_token}"}
+
     for attempt in range(max_retries):
         try:
             resp = requests.get(
                 f"{API_BASE}/{slug}/chapters",
                 timeout=TIMEOUT,
-                cookies=cookies
+                cookies=cookies,
+                headers=headers,
             )
             resp.raise_for_status()
             arr = resp.json().get("data", [])
@@ -195,20 +204,21 @@ def fetch_chapters_list(slug: str, max_retries: int = 3, cookies: Optional[Dict[
 
 
 def fetch_chapter(
-    slug: str, volume: int, number: str, max_retries: int = 3,
-    cookies: Optional[Dict[str, str]] = None, branch_id: Optional[int] = None
+    slug: str,
+    volume: int,
+    number: str,
+    max_retries: int = 3,
+    cookies: Optional[Dict[str, str]] = None,
+    branch_id: Optional[int] = None,
+    auth_token: Optional[str] = None,
 ):
     """
     Возвращает dict с JSON-полем 'data' для одной главы.
-    
-    Args:
-        slug: Slug книги
-        volume: Номер тома
-        number: Номер главы
-        max_retries: Максимальное количество попыток
-        cookies: Словарь с cookies для авторизации (опционально)
-        branch_id: ID ветки главы (опционально, не требуется для некоторых книг)
     """
+    headers = None
+    if auth_token:
+        headers = {"Authorization": f"Bearer {auth_token}"}
+
     for attempt in range(max_retries):
         try:
             params = {"volume": volume, "number": number}
@@ -219,7 +229,8 @@ def fetch_chapter(
                 f"{API_BASE}/{slug}/chapter",
                 params=params,
                 timeout=TIMEOUT,
-                cookies=cookies
+                cookies=cookies,
+                headers=headers,
             )
             resp.raise_for_status()
             return resp.json().get("data", {})

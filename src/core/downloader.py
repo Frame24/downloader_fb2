@@ -47,9 +47,15 @@ class ChapterInfo:
 class ChapterDownloader:
     """Основной класс для скачивания глав"""
 
-    def __init__(self, config: DownloadConfig, cookies: Optional[Dict[str, str]] = None):
+    def __init__(
+        self,
+        config: DownloadConfig,
+        cookies: Optional[Dict[str, str]] = None,
+        auth_token: Optional[str] = None,
+    ):
         self.config = config
         self.cookies = cookies
+        self.auth_token = auth_token
         self.downloaded_chapters: List[ChapterInfo] = []
         self.failed_chapters: List[ChapterInfo] = []
 
@@ -129,7 +135,8 @@ class ChapterDownloader:
                     chapter_info.volume,
                     chapter_info.chapter_num,
                     cookies=self.cookies,
-                    branch_id=chapter_info.branch_id
+                    branch_id=chapter_info.branch_id,
+                    auth_token=self.auth_token,
                 )
 
                 if not data or "content" not in data:
@@ -207,13 +214,13 @@ class ChapterDownloader:
     ) -> List[ChapterInfo]:
         """Получает список глав для скачивания"""
         # Получаем информацию о книге
-        book_info = fetch_book_info(slug, cookies=self.cookies)
+        book_info = fetch_book_info(slug, cookies=self.cookies, auth_token=self.auth_token)
         if not book_info:
             print("❌ Не удалось получить информацию о книге")
             return []
 
         # Получаем список глав
-        chapters = fetch_chapters_list(slug, cookies=self.cookies)
+        chapters = fetch_chapters_list(slug, cookies=self.cookies, auth_token=self.auth_token)
         if not chapters:
             print("⚠️  Не удалось получить список глав через API")
             # Если указан диапазон глав, создаем список глав напрямую
@@ -222,7 +229,14 @@ class ChapterDownloader:
                 target_chapters = []
                 for chapter_num in range(start_chapter, end_chapter + 1):
                     # Пробуем получить главу для проверки доступности
-                    test_data = fetch_chapter(slug, 1, str(chapter_num), max_retries=1, cookies=self.cookies)
+                    test_data = fetch_chapter(
+                        slug,
+                        1,
+                        str(chapter_num),
+                        max_retries=1,
+                        cookies=self.cookies,
+                        auth_token=self.auth_token,
+                    )
                     if test_data and "content" in test_data:
                         target_chapters.append(
                             ChapterInfo(str(chapter_num), 1, None, f"Глава_{chapter_num}")
@@ -376,7 +390,11 @@ class ChapterDownloader:
             )
 
             # Создаем временный загрузчик для повторных попыток
-            retry_downloader = ChapterDownloader(retry_config, cookies=self.cookies)
+            retry_downloader = ChapterDownloader(
+                retry_config,
+                cookies=self.cookies,
+                auth_token=self.auth_token,
+            )
             retry_downloader.downloaded_chapters = self.downloaded_chapters.copy()
 
             # Пробуем скачать неудачные главы
@@ -439,7 +457,11 @@ class ChapterDownloader:
             )
 
             # Создаем временный загрузчик для повторных попыток
-            retry_downloader = ChapterDownloader(retry_config, cookies=self.cookies)
+            retry_downloader = ChapterDownloader(
+                retry_config,
+                cookies=self.cookies,
+                auth_token=self.auth_token,
+            )
             retry_downloader.downloaded_chapters = self.downloaded_chapters.copy()
 
             # Пробуем скачать неудачные главы

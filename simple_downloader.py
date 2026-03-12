@@ -20,6 +20,7 @@ src_path = Path(__file__).parent / "src"
 sys.path.insert(0, str(src_path))
 
 from src.interface import BookDownloader
+from src.utils.auth import load_auth_token, save_auth_token
 
 
 def show_menu():
@@ -43,7 +44,8 @@ def download_full_book():
         return
     
     try:
-        downloader = BookDownloader()
+        auth_token = load_auth_token()
+        downloader = BookDownloader(auth_token=auth_token)
         print("🚀 Скачиваем всю книгу...")
         result = downloader.full_download(url)
         
@@ -71,7 +73,8 @@ def download_chapters():
             print("❌ Начальная глава не может быть больше конечной")
             return
         
-        downloader = BookDownloader()
+        auth_token = load_auth_token()
+        downloader = BookDownloader(auth_token=auth_token)
         print(f"🚀 Скачиваем главы {start}-{end} (включительно)...")
         result = downloader.full_download(url, start, end)
         
@@ -94,7 +97,8 @@ def show_book_info():
         return
     
     try:
-        downloader = BookDownloader()
+        auth_token = load_auth_token()
+        downloader = BookDownloader(auth_token=auth_token)
         book_info = downloader.get_book_info(url)
         
         print(f"\n📚 Информация о книге:")
@@ -108,12 +112,25 @@ def show_book_info():
 
 
 def show_settings():
-    """Показывает настройки"""
+    """Показывает настройки и позволяет задать токен"""
     print("\n⚙️ Настройки:")
     print("📁 Папка сохранения: output/")
     print("🔄 Потоков скачивания: 5")
     print("📚 Формат: FB2")
-    print("\n💡 Для изменения настроек используйте командную строку")
+
+    current_token = load_auth_token()
+    if current_token:
+        print("🔐 Токен авторизации: уже задан")
+    else:
+        print("🔐 Токен авторизации: не задан")
+
+    print("\nВведите новый Bearer токен (или оставьте пустым, чтобы не менять):")
+    new_token = input("> ").strip()
+    if new_token:
+        save_auth_token(new_token)
+        print("✅ Токен сохранён.")
+    else:
+        print("Токен не изменён.")
 
 
 def main():
