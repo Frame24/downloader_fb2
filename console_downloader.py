@@ -40,7 +40,7 @@ def main():
     
     # Извлекаем slug
     try:
-        slug, _, _, _ = extract_info(url)
+        slug, _, branch_ui, _ = extract_info(url)
     except ValueError as e:
         print(f"❌ Ошибка разбора URL: {e}")
         return
@@ -65,7 +65,7 @@ def main():
     
     # Настройки скачивания
     config = DownloadConfig(max_workers=5)
-    downloader = ChapterDownloader(config)
+    downloader = ChapterDownloader(config, branch_ui=branch_ui)
     
     # Скачиваем всю книгу
     successful, failed = downloader.download_full_book(slug, output_dir)

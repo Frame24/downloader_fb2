@@ -42,9 +42,10 @@ class TestCookiesFunctionality:
 
     def test_url_parsing(self):
         """Тест парсинга URL книги с 18+ контентом"""
-        slug, book_type, _, _ = extract_info(self.TEST_BOOK_URL)
+        slug, book_type, branch_ui, _ = extract_info(self.TEST_BOOK_URL)
         assert slug == self.TEST_BOOK_SLUG
         assert book_type == "list"
+        assert branch_ui == 6052250
         print(f"✅ URL парсится корректно: {slug}")
 
     def test_book_info_without_cookies(self):

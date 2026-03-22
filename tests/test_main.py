@@ -19,7 +19,13 @@ sys.path.insert(0, str(src_path))
 
 from src.core.downloader import ChapterDownloader, DownloadConfig
 from src.core.converter import DataConverter
-from src.client import extract_info, fetch_book_info, fetch_chapters_list, fetch_chapter
+from src.client import (
+    DEFAULT_API_HEADERS,
+    extract_info,
+    fetch_book_info,
+    fetch_chapters_list,
+    fetch_chapter,
+)
 
 
 class TestProject:
@@ -48,7 +54,8 @@ class TestProject:
         try:
             response = requests.get(
                 f"https://api.cdnlibs.org/api/manga/{self.TEST_BOOK_SLUG}/chapters",
-                timeout=10
+                headers=DEFAULT_API_HEADERS,
+                timeout=10,
             )
             assert response.status_code == 200
             data = response.json()

@@ -115,6 +115,10 @@ python -m src.interface "URL_книги" --cookies opera
 
 **Важно:** Перед использованием убедитесь, что вы авторизованы в браузере на сайте ranobelib.me. Браузер должен быть закрыт во время извлечения cookies.
 
+При `--cookies` собираются cookies с доменов `ranobelib.me`, `cdnlibs.org`, `imglib.info`, `libs.social`. Можно добавить `--cookies-file cookies.txt` (формат Netscape). Если в cookies есть JWT (`access_token` / `token` и т.п.), он подставится в `Authorization` автоматически. Ссылку на книгу копируйте с сайта целиком: `?ui=...` задаёт ветку перевода.
+
+Явный Bearer: `--auth-token` или `src/output/ranobelib_auth_token.txt`.
+
 ## Лицензия
 
 MIT

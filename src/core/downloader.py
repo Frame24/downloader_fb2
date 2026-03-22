@@ -40,7 +40,7 @@ class ChapterInfo:
 
     chapter_num: str
     volume: int
-    branch_id: int
+    branch_id: Optional[int]
     title: str
 
 
@@ -52,10 +52,12 @@ class ChapterDownloader:
         config: DownloadConfig,
         cookies: Optional[Dict[str, str]] = None,
         auth_token: Optional[str] = None,
+        branch_ui: Optional[int] = None,
     ):
         self.config = config
         self.cookies = cookies
         self.auth_token = auth_token
+        self.branch_ui = branch_ui
         self.downloaded_chapters: List[ChapterInfo] = []
         self.failed_chapters: List[ChapterInfo] = []
 
@@ -220,7 +222,12 @@ class ChapterDownloader:
             return []
 
         # Получаем список глав
-        chapters = fetch_chapters_list(slug, cookies=self.cookies, auth_token=self.auth_token)
+        chapters = fetch_chapters_list(
+            slug,
+            cookies=self.cookies,
+            auth_token=self.auth_token,
+            branch_ui=self.branch_ui,
+        )
         if not chapters:
             print("⚠️  Не удалось получить список глав через API")
             # Если указан диапазон глав, создаем список глав напрямую
@@ -394,6 +401,7 @@ class ChapterDownloader:
                 retry_config,
                 cookies=self.cookies,
                 auth_token=self.auth_token,
+                branch_ui=self.branch_ui,
             )
             retry_downloader.downloaded_chapters = self.downloaded_chapters.copy()
 
@@ -461,6 +469,7 @@ class ChapterDownloader:
                 retry_config,
                 cookies=self.cookies,
                 auth_token=self.auth_token,
+                branch_ui=self.branch_ui,
             )
             retry_downloader.downloaded_chapters = self.downloaded_chapters.copy()
 
