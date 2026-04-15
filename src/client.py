@@ -211,6 +211,9 @@ def fetch_chapters_list(
                 cookies=cookies,
                 headers=_api_headers(auth_token, cookies),
             )
+            if resp.status_code in (401, 403) and auth_token:
+                print("🔐 Bearer-токен не работает или устарел (API вернул 401/403). Обновите токен.")
+                return []
             resp.raise_for_status()
             raw = resp.json().get("data", [])
             arr = raw if isinstance(raw, list) else []
@@ -317,6 +320,9 @@ def fetch_chapter(
                 cookies=cookies,
                 headers=headers,
             )
+            if resp.status_code in (401, 403) and auth_token:
+                print("🔐 Bearer-токен не работает или устарел (API вернул 401/403). Обновите токен.")
+                return {}
             resp.raise_for_status()
             data = resp.json().get("data", {})
             if (
