@@ -5,6 +5,14 @@ import requests
 import re
 from datetime import datetime
 
+try:
+    # Настройка кодировки для Windows консоли
+    from .utils.encoding import setup_console_encoding
+
+    setup_console_encoding()
+except Exception:
+    pass
+
 
 def clean_html(html_text):
     """Очищает HTML теги из текста и сохраняет структуру параграфов."""
@@ -409,29 +417,39 @@ def merge_chapters_to_book(book_dir: str, book_info: dict, output_file: str = No
         print("❌ FB2 файлы глав не найдены!")
         return None
 
-    # Сортируем файлы по номеру главы с учетом подглав
-    def extract_chapter_number(filename: str):
-        # Извлекаем номер главы из имени файла (формат: "1_Том1_..." или "1.1_Том1_...")
-        match = re.match(r"([\d.]+)", filename)
-        if not match:
-            return (0, 0)
+    # Сортируем файлы численно: сначала по тому, затем по номеру главы (с учетом подглав).
+    # Имена файлов создаются в формате:
+    #   "<safe_chapter_num>_Том<volume>_... .fb2"
+    # где safe_chapter_num использует "_" вместо "." (например, "10_2" для "10.2").
+    def extract_sort_key(filename: str):
+        m = re.match(r"(.+?)_Том(\d+)_", filename)
+        if not m:
+            return (10**9, 10**9, 10**9, filename)
 
-        chapter_str = match.group(1)
-        if "." in chapter_str:
-            # Для подглав типа "1.1" создаем кортеж (1, 1)
-            parts = chapter_str.split(".")
-            try:
-                return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
-            except (ValueError, IndexError):
-                return (0, 0)
-        else:
-            # Для обычных глав типа "105"
-            try:
-                return (int(chapter_str), 0)
-            except ValueError:
-                return (0, 0)
+        chapter_part = m.group(1)
+        try:
+            volume = int(m.group(2))
+        except ValueError:
+            volume = 10**9
 
-    fb2_files.sort(key=extract_chapter_number)
+        chapter_part = chapter_part.replace("_", ".")
+        parts = [p for p in chapter_part.split(".") if p != ""]
+        nums = []
+        for p in parts:
+            if p.isdigit():
+                nums.append(int(p))
+            else:
+                # На всякий случай: если номер содержит мусор — оставляем как есть в хвосте.
+                return (volume, 10**9, 10**9, filename)
+
+        # Нормализуем длину ключа: (volume, main, sub, subsub, ..., filename)
+        # Для обычных глав будет sub=0.
+        main = nums[0] if nums else 10**9
+        sub = nums[1] if len(nums) > 1 else 0
+        sub2 = nums[2] if len(nums) > 2 else 0
+        return (volume, main, sub, sub2, filename)
+
+    fb2_files.sort(key=extract_sort_key)
     total_chapters = len(fb2_files)
     print(f"📊 Найдено глав для объединения: {total_chapters}")
 
