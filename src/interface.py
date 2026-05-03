@@ -47,10 +47,13 @@ class BookDownloader:
         output_base: str = "output",
         cookies: Optional[Dict[str, str]] = None,
         auth_token: Optional[str] = None,
+        skip_existing: bool = True,
     ):
         self.max_workers = max_workers
         self.output_base = output_base
-        self.config = DownloadConfig(max_workers=max_workers)
+        self.config = DownloadConfig(
+            max_workers=max_workers, skip_existing=skip_existing
+        )
         self.downloader = ChapterDownloader(
             self.config, cookies=cookies, auth_token=auth_token, branch_ui=None
         )
@@ -180,7 +183,12 @@ def create_cli_parser() -> argparse.ArgumentParser:
         help="Файл cookies в формате Netscape (экспорт из браузера)",
     )
     parser.add_argument("--auth-token", help="Bearer токен для авторизации в API")
-    
+    parser.add_argument(
+        "--redownload",
+        action="store_true",
+        help="Заново скачать главы с API, даже если JSON уже есть в raw_data",
+    )
+
     return parser
 
 
@@ -213,6 +221,7 @@ def main():
             output_base=args.output,
             cookies=cookies,
             auth_token=auth_token,
+            skip_existing=not args.redownload,
         )
         
         if args.info_only:

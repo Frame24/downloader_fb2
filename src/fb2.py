@@ -291,9 +291,27 @@ def build_fb2(data, book_info=None, volume=None, chapter_number=None):
                         if "content" in node:
                             for chunk in node.get("content", []):
                                 if isinstance(chunk, dict) and "text" in chunk:
-                                    node_text += chunk.get("text", "")
+                                    chunk_text = chunk.get("text", "")
+                                    if chunk_text:
+                                        # Иногда API присылает текст кусками (из-за разметки/маркеров),
+                                        # и пробел может "потеряться" на границе чанков.
+                                        if (
+                                            node_text
+                                            and node_text[-1].isalnum()
+                                            and chunk_text[0].isalnum()
+                                        ):
+                                            node_text += " "
+                                        node_text += chunk_text
                                 elif isinstance(chunk, str):
-                                    node_text += chunk
+                                    chunk_text = chunk
+                                    if chunk_text:
+                                        if (
+                                            node_text
+                                            and node_text[-1].isalnum()
+                                            and chunk_text[0].isalnum()
+                                        ):
+                                            node_text += " "
+                                        node_text += chunk_text
                         elif "text" in node:
                             node_text = node.get("text", "")
 

@@ -32,6 +32,11 @@ def main():
         "--cookies-file",
         help="Файл cookies в формате Netscape (экспорт из браузера)",
     )
+    parser.add_argument(
+        "--redownload",
+        action="store_true",
+        help="Заново скачать главы с API, даже если JSON уже есть в raw_data",
+    )
 
     args = parser.parse_args()
 
@@ -51,7 +56,7 @@ def main():
         save_auth_token(args.auth_token)
 
     # Настройки скачивания
-    config = DownloadConfig(max_workers=5)
+    config = DownloadConfig(max_workers=5, skip_existing=not args.redownload)
     downloader = ChapterDownloader(
         config, cookies=cookies, auth_token=auth_token, branch_ui=branch_ui
     )

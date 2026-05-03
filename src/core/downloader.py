@@ -7,6 +7,7 @@
 
 import json
 import time
+import threading
 import concurrent.futures
 from typing import List, Tuple, Optional, Dict
 from dataclasses import dataclass
@@ -30,6 +31,8 @@ class DownloadConfig:
     max_retries: int = 5  # Увеличиваем количество попыток
     save_raw_data: bool = True
     save_fb2: bool = True
+    # Если в raw_data уже есть валидный JSON главы — не дергать API (докачка / возобновление)
+    skip_existing: bool = True
     error_timeout: int = 10  # Таймаут после ошибки в секундах
     exponential_backoff: bool = True  # Экспоненциальная задержка
 
@@ -60,6 +63,8 @@ class ChapterDownloader:
         self.branch_ui = branch_ui
         self.downloaded_chapters: List[ChapterInfo] = []
         self.failed_chapters: List[ChapterInfo] = []
+        self.skipped_existing: int = 0
+        self._skip_lock = threading.Lock()
 
     def _ensure_directories(self, output_dir: str) -> Tuple[str, str]:
         """Создает необходимые директории и возвращает пути"""
@@ -73,6 +78,45 @@ class ChapterDownloader:
             fb2_dir.mkdir(parents=True, exist_ok=True)
 
         return str(raw_dir), str(fb2_dir)
+
+    def _raw_json_exact_path(self, chapter_info: ChapterInfo, raw_dir: str) -> Path:
+        safe_chapter_num = str(chapter_info.chapter_num).replace(".", "_")
+        return (
+            Path(raw_dir)
+            / f"{safe_chapter_num}_Том{chapter_info.volume}_"
+            f"{chapter_info.title}.json"
+        )
+
+    def _find_existing_raw_file(
+        self, chapter_info: ChapterInfo, raw_dir: str
+    ) -> Optional[Path]:
+        """Ищет JSON главы: точное имя или {номер}_Том{vol}_*.json (один кандидат)."""
+        raw_path = Path(raw_dir)
+        if not raw_path.is_dir():
+            return None
+        exact = self._raw_json_exact_path(chapter_info, raw_dir)
+        if exact.is_file():
+            return exact
+        safe_chapter_num = str(chapter_info.chapter_num).replace(".", "_")
+        candidates = sorted(
+            raw_path.glob(
+                f"{safe_chapter_num}_Том{chapter_info.volume}_*.json"
+            )
+        )
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
+
+    @staticmethod
+    def _load_chapter_json(path: Path) -> Optional[dict]:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and data.get("content"):
+                return data
+        except (OSError, json.JSONDecodeError):
+            pass
+        return None
 
     def _save_raw_data(
         self, data: dict, chapter_info: ChapterInfo, raw_dir: str
@@ -129,6 +173,31 @@ class ChapterDownloader:
         self, chapter_info: ChapterInfo, output_dir: str, slug: str
     ) -> bool:
         """Скачивает одну главу с умными повторными попытками"""
+        raw_dir, fb2_dir = self._ensure_directories(output_dir)
+
+        if self.config.skip_existing:
+            existing_path = self._find_existing_raw_file(chapter_info, raw_dir)
+            if existing_path is not None:
+                cached = self._load_chapter_json(existing_path)
+                if cached:
+                    need_download = False
+                    if self.config.save_fb2:
+                        safe_chapter_num = str(chapter_info.chapter_num).replace(
+                            ".", "_"
+                        )
+                        fb2_file = (
+                            Path(fb2_dir)
+                            / f"{safe_chapter_num}_Том{chapter_info.volume}_"
+                            f"{chapter_info.title}.fb2"
+                        )
+                        if not fb2_file.is_file():
+                            if not self._save_fb2(cached, chapter_info, fb2_dir):
+                                need_download = True
+                    if not need_download:
+                        with self._skip_lock:
+                            self.skipped_existing += 1
+                        return True
+
         for attempt in range(self.config.max_retries):
             try:
                 # Получаем данные главы
@@ -160,8 +229,6 @@ class ChapterDownloader:
                         f"Глава {chapter_info.chapter_num}: Нет данных после всех попыток"
                     )
                     return False
-
-                raw_dir, fb2_dir = self._ensure_directories(output_dir)
 
                 # Сохраняем исходные данные
                 if self.config.save_raw_data:
@@ -304,6 +371,7 @@ class ChapterDownloader:
         self, chapters: List[ChapterInfo], output_dir: str, slug: str
     ) -> Tuple[int, int]:
         """Скачивает главы параллельно"""
+        self.skipped_existing = 0
         successful = 0
         failed = 0
 
@@ -351,6 +419,11 @@ class ChapterDownloader:
             f"\nИтоговый прогресс: [{progress_bar}] {total}/{len(chapters)} "
             f"({progress_percent:.1f}%) | Успешно: {successful} | Ошибок: {failed}"
         )
+        if self.skipped_existing:
+            print(
+                f"⏭ Уже были на диске (без повторной загрузки): "
+                f"{self.skipped_existing} глав"
+            )
         return successful, failed
 
     def download_chapters_range(
@@ -392,6 +465,7 @@ class ChapterDownloader:
                 max_retries=3,  # Уменьшаем количество попыток для повторного прохода
                 save_raw_data=self.config.save_raw_data,
                 save_fb2=self.config.save_fb2,
+                skip_existing=self.config.skip_existing,
                 error_timeout=20,  # Увеличиваем таймаут после ошибок
                 exponential_backoff=True,
             )
@@ -460,6 +534,7 @@ class ChapterDownloader:
                 max_retries=3,  # Уменьшаем количество попыток для повторного прохода
                 save_raw_data=self.config.save_raw_data,
                 save_fb2=self.config.save_fb2,
+                skip_existing=self.config.skip_existing,
                 error_timeout=20,  # Увеличиваем таймаут после ошибок
                 exponential_backoff=True,
             )
