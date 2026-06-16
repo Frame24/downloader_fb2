@@ -202,6 +202,124 @@ def clean_html(html_text):
     return text
 
 
+def _append_text_chunk(node_text, chunk_text):
+    """Добавляет фрагмент текста, восстанавливая пробел между соседними словами."""
+    if not chunk_text:
+        return node_text
+    if node_text and node_text[-1].isalnum() and chunk_text[0].isalnum():
+        node_text += " "
+    return node_text + chunk_text
+
+
+def _extract_inline_text(chunks):
+    """Извлекает текст из inline-узлов ProseMirror (paragraph.content)."""
+    node_text = ""
+    for chunk in chunks or []:
+        if isinstance(chunk, str):
+            node_text = _append_text_chunk(node_text, chunk)
+        elif isinstance(chunk, dict):
+            chunk_type = chunk.get("type", "")
+            if chunk_type == "text":
+                node_text = _append_text_chunk(node_text, chunk.get("text", ""))
+            elif chunk_type == "hardBreak":
+                node_text += "\n"
+            elif "text" in chunk:
+                node_text = _append_text_chunk(node_text, chunk.get("text", ""))
+    return node_text
+
+
+def _extract_paragraph_text(node):
+    """Извлекает текст из узла paragraph или heading."""
+    if "content" in node:
+        return _extract_inline_text(node.get("content", []))
+    return node.get("text", "")
+
+
+def _list_item_lines(item):
+    """Собирает строки из listItem: параграфы и вложенные блоки."""
+    lines = []
+    for child in item.get("content", []):
+        if not isinstance(child, dict):
+            continue
+        child_type = child.get("type", "")
+        if child_type == "paragraph":
+            text = _extract_paragraph_text(child).strip()
+            if text:
+                lines.append(text)
+        elif child_type in ("bulletList", "orderedList", "blockquote"):
+            lines.extend(_blocks_from_node(child))
+        else:
+            for block in _blocks_from_node(child):
+                if block:
+                    lines.append(block)
+    return lines
+
+
+def _blocks_from_node(node):
+    """Возвращает список строк-параграфов для одного блочного узла ProseMirror."""
+    node_type = node.get("type", "")
+
+    if node_type in ("paragraph", "heading"):
+        text = _extract_paragraph_text(node).strip()
+        return [text] if text else []
+
+    if node_type == "horizontalRule":
+        return ["-" * 40]
+
+    if node_type == "bulletList":
+        blocks = []
+        for item in node.get("content", []):
+            if not isinstance(item, dict) or item.get("type") != "listItem":
+                continue
+            lines = _list_item_lines(item)
+            if lines:
+                blocks.append("• " + "\n".join(lines))
+        return blocks
+
+    if node_type == "orderedList":
+        blocks = []
+        index = 1
+        for item in node.get("content", []):
+            if not isinstance(item, dict) or item.get("type") != "listItem":
+                continue
+            lines = _list_item_lines(item)
+            if lines:
+                blocks.append(f"{index}. " + "\n".join(lines))
+                index += 1
+        return blocks
+
+    if node_type == "blockquote":
+        blocks = []
+        for child in node.get("content", []):
+            for block in _blocks_from_node(child):
+                blocks.append("> " + block)
+        return blocks
+
+    if node_type == "codeBlock":
+        text = _extract_paragraph_text(node).strip()
+        return [f"```\n{text}\n```"] if text else []
+
+    if "content" in node:
+        blocks = []
+        for child in node.get("content", []):
+            if isinstance(child, dict):
+                blocks.extend(_blocks_from_node(child))
+        return blocks
+
+    return []
+
+
+def _blocks_from_prosemirror(content):
+    """Извлекает параграфы из ProseMirror-документа (dict с type и content)."""
+    if not isinstance(content, dict):
+        return []
+    blocks = []
+    for node in content.get("content", []):
+        if isinstance(node, dict):
+            blocks.extend(_blocks_from_node(node))
+    return blocks
+
+
 def build_fb2(data, book_info=None, volume=None, chapter_number=None):
     """
     Создает FB2 файл из данных главы.
@@ -282,44 +400,7 @@ def build_fb2(data, book_info=None, volume=None, chapter_number=None):
             # Разбиваем контент на параграфы по двойным переносам строк
             paragraphs = [p.strip() for p in clean_content.split("\n\n") if p.strip()]
         elif isinstance(content, dict):
-            # Если контент - словарь, извлекаем текст более надежно
-            clean_content = ""
-            if "content" in content:
-                for node in content["content"]:
-                    if node.get("type") == "paragraph":
-                        node_text = ""
-                        if "content" in node:
-                            for chunk in node.get("content", []):
-                                if isinstance(chunk, dict) and "text" in chunk:
-                                    chunk_text = chunk.get("text", "")
-                                    if chunk_text:
-                                        # Иногда API присылает текст кусками (из-за разметки/маркеров),
-                                        # и пробел может "потеряться" на границе чанков.
-                                        if (
-                                            node_text
-                                            and node_text[-1].isalnum()
-                                            and chunk_text[0].isalnum()
-                                        ):
-                                            node_text += " "
-                                        node_text += chunk_text
-                                elif isinstance(chunk, str):
-                                    chunk_text = chunk
-                                    if chunk_text:
-                                        if (
-                                            node_text
-                                            and node_text[-1].isalnum()
-                                            and chunk_text[0].isalnum()
-                                        ):
-                                            node_text += " "
-                                        node_text += chunk_text
-                        elif "text" in node:
-                            node_text = node.get("text", "")
-
-                        if node_text.strip():
-                            clean_content += node_text.strip() + "\n\n"
-
-            # Разбиваем на параграфы
-            paragraphs = [p.strip() for p in clean_content.split("\n\n") if p.strip()]
+            paragraphs = _blocks_from_prosemirror(content)
         else:
             paragraphs = []
 
