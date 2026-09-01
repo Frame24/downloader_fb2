@@ -1,5 +1,4 @@
 import xml.etree.ElementTree as ET
-from xml.dom import minidom
 import base64
 import requests
 import re
@@ -12,6 +11,55 @@ try:
     setup_console_encoding()
 except Exception:
     pass
+
+
+FB2_NS = "http://www.gribuser.ru/xml/fictionbook/2.0"
+XLINK_NS = "http://www.w3.org/1999/xlink"
+
+
+def _fb2_root():
+    """Корневой FictionBook с пространствами имён, которые ждут читалки."""
+    ET.register_namespace("l", XLINK_NS)
+    root = ET.Element("FictionBook")
+    root.set("xmlns", FB2_NS)
+    root.set("xmlns:l", XLINK_NS)
+    return root
+
+
+def _local_tag(el) -> str:
+    tag = el.tag if isinstance(el.tag, str) else ""
+    return tag.split("}")[-1]
+
+
+def _serialize_fb2(root) -> bytes:
+    """Пишет FB2 без minidom: он подменяет xmlns:l на ns0 и роняет часть читалок."""
+    ET.register_namespace("l", XLINK_NS)
+    href_clark = f"{{{XLINK_NS}}}href"
+    for el in root.iter():
+        if href_clark in el.attrib:
+            href = el.attrib.pop(href_clark)
+            if "l:href" not in el.attrib:
+                el.attrib["l:href"] = href
+        if _local_tag(el) == "image" and el.text is not None and not el.text.strip():
+            el.text = None
+        if _local_tag(el) == "binary" and el.text:
+            el.text = re.sub(r"\s+", "", el.text)
+    try:
+        ET.indent(root, space="  ")
+    except AttributeError:
+        pass
+    for el in root.iter():
+        if href_clark in el.attrib:
+            href = el.attrib.pop(href_clark)
+            if "l:href" not in el.attrib:
+                el.attrib["l:href"] = href
+        if _local_tag(el) == "image" and el.text is not None and not el.text.strip():
+            el.text = None
+        if _local_tag(el) == "binary" and el.text:
+            el.text = re.sub(r"\s+", "", el.text)
+    body = ET.tostring(root, encoding="utf-8")
+    body = re.sub(rb'\sxmlns:ns\d+="[^"]*"', b"", body)
+    return b'<?xml version="1.0" encoding="utf-8"?>\n' + body
 
 
 def clean_html(html_text):
@@ -50,7 +98,7 @@ def clean_html(html_text):
     # Обрабатываем ссылки
     text = re.sub(r'<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>', r"\2 (\1)", text)
 
-    # Обрабатываем изображения
+    # Обрабатываем изображения (запасной вариант, если тег не вырезали заранее)
     text = re.sub(r'<img[^>]*alt="([^"]*)"[^>]*>', r"[Изображение: \1]", text)
     text = re.sub(r"<img[^>]*>", r"[Изображение]", text)
 
@@ -204,6 +252,154 @@ def clean_html(html_text):
 
 _HARD_BREAK_TYPES = frozenset({"hardBreak", "hard_break"})
 _SENTENCE_END_CHARS = ".!?…"
+_IMAGE_PREFIX = "__FB2_IMAGE__:"
+_IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.I)
+_IMG_SRC_RE = re.compile(
+    r"""(?:src|data-src)\s*=\s*['"]([^'"]+)['"]""", re.I
+)
+_IMAGE_MIME = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+}
+
+
+def _image_block(ref: str) -> str:
+    return f"{_IMAGE_PREFIX}{ref}"
+
+
+def _is_image_block(block: str) -> bool:
+    return isinstance(block, str) and block.startswith(_IMAGE_PREFIX)
+
+
+def _image_ref(block: str) -> str:
+    return block[len(_IMAGE_PREFIX) :] if _is_image_block(block) else ""
+
+
+def _image_refs_from_pm(node) -> list:
+    attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
+    refs = []
+    src = attrs.get("src") or node.get("src")
+    if src:
+        refs.append(str(src))
+    images = attrs.get("images") or []
+    if isinstance(images, list):
+        for item in images:
+            if isinstance(item, dict):
+                ref = item.get("image") or item.get("src") or item.get("url") or ""
+            else:
+                ref = str(item or "")
+            if ref:
+                refs.append(ref)
+    return refs
+
+
+def _html_to_blocks(html_text: str) -> list:
+    """Параграфы HTML + картинки на своих местах."""
+    urls = []
+
+    def _replace_img(match):
+        src_m = _IMG_SRC_RE.search(match.group(0))
+        urls.append(src_m.group(1).strip() if src_m else "")
+        return f"\n\n{_image_block(str(len(urls) - 1))}\n\n"
+
+    marked = _IMG_TAG_RE.sub(_replace_img, html_text or "")
+    clean = clean_html(marked)
+    blocks = []
+    for part in re.split(r"\n+", clean):
+        part = part.strip()
+        if not part:
+            continue
+        if _is_image_block(part):
+            try:
+                idx = int(_image_ref(part))
+            except ValueError:
+                continue
+            if 0 <= idx < len(urls) and urls[idx]:
+                blocks.append(_image_block(urls[idx]))
+            continue
+        blocks.append(part)
+    return blocks
+
+
+def _attachment_absolute_url(att) -> str:
+    url = str((att or {}).get("url") or "").strip()
+    if not url:
+        return ""
+    if url.startswith("//"):
+        return "https:" + url
+    if url.startswith("/"):
+        return "https://ranobelib.me" + url
+    if url.startswith(("http://", "https://")):
+        return url
+    return "https://ranobelib.me/" + url.lstrip("/")
+
+
+def _resolve_image_url(ref: str, attachments: list) -> str:
+    ref = (ref or "").strip()
+    if not ref:
+        return ""
+    key = ref.split("?")[0].rstrip("/").split("/")[-1]
+    for att in attachments or []:
+        names = {
+            str(att.get("name") or ""),
+            str(att.get("filename") or ""),
+            str(att.get("id") or ""),
+            str(att.get("url") or "").split("/")[-1],
+        }
+        if ref in names or key in names:
+            return _attachment_absolute_url(att) or ref
+    if ref.startswith("//"):
+        return "https:" + ref
+    if ref.startswith("/"):
+        return "https://ranobelib.me" + ref
+    if ref.startswith(("http://", "https://")):
+        return ref
+    return ""
+
+
+def _mime_for_url(url: str, content_type: str) -> str:
+    ctype = (content_type or "").split(";")[0].strip().lower()
+    if ctype.startswith("image/"):
+        return ctype
+    ext = ""
+    path = (url or "").split("?")[0].lower()
+    for candidate, mime in _IMAGE_MIME.items():
+        if path.endswith(candidate):
+            ext = mime
+            break
+    return ext or "image/jpeg"
+
+
+def _download_image(url: str):
+    """Скачивает картинку. Возвращает (bytes, mime) или None."""
+    if not url:
+        return None
+    try:
+        from .client import DEFAULT_API_HEADERS
+
+        headers = dict(DEFAULT_API_HEADERS)
+        headers["Accept"] = "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
+        resp = requests.get(url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        data = resp.content
+        mime = _mime_for_url(url, resp.headers.get("content-type", ""))
+        if not data or len(data) < 50 or not mime.startswith("image/"):
+            return None
+        return data, mime
+    except Exception:
+        return None
+
+
+def _binary_id(chapter_number, volume, index: int, ref: str) -> str:
+    name = ref.split("?")[0].rstrip("/").split("/")[-1] or f"img{index}"
+    name = re.sub(r"[^A-Za-z0-9_-]", "_", name)
+    ch = re.sub(r"[^A-Za-z0-9_-]", "_", str(chapter_number or "x"))
+    vol = re.sub(r"[^A-Za-z0-9_-]", "_", str(volume if volume is not None else "1"))
+    return f"img_v{vol}_c{ch}_{index}_{name}"[:120]
 
 
 def _append_text_chunk(node_text, chunk_text):
@@ -254,6 +450,14 @@ def _inline_paragraphs(chunks):
                 paragraphs.append(text)
             current = ""
             continue
+        if isinstance(chunk, dict) and chunk.get("type") == "image":
+            text = current.strip()
+            if text:
+                paragraphs.append(text)
+            current = ""
+            for ref in _image_refs_from_pm(chunk):
+                paragraphs.append(_image_block(ref))
+            continue
         current = _append_text_chunk(current, _inline_text_of(chunk))
     text = current.strip()
     if text:
@@ -282,6 +486,8 @@ def _list_item_lines(item):
         child_type = child.get("type", "")
         if child_type == "paragraph":
             lines.extend(_inline_paragraphs(child.get("content", [])))
+        elif child_type == "image":
+            lines.extend(_image_block(ref) for ref in _image_refs_from_pm(child))
         elif child_type in ("bulletList", "orderedList", "blockquote"):
             lines.extend(_blocks_from_node(child))
         else:
@@ -289,6 +495,26 @@ def _list_item_lines(item):
                 if block:
                     lines.append(block)
     return lines
+
+
+def _blocks_from_prefixed_lines(prefix: str, lines: list) -> list:
+    """Склеивает текстовые строки списка, картинки оставляет отдельными блоками."""
+    blocks = []
+    text_lines = []
+
+    def flush():
+        if text_lines:
+            blocks.append(prefix + "\n".join(text_lines))
+            text_lines.clear()
+
+    for line in lines:
+        if _is_image_block(line):
+            flush()
+            blocks.append(line)
+        elif line:
+            text_lines.append(line)
+    flush()
+    return blocks
 
 
 def _blocks_from_node(node):
@@ -309,6 +535,9 @@ def _blocks_from_node(node):
         )
         return [p for p in parts if p]
 
+    if node_type == "image":
+        return [_image_block(ref) for ref in _image_refs_from_pm(node)]
+
     if node_type == "horizontalRule":
         return ["-" * 40]
 
@@ -317,9 +546,7 @@ def _blocks_from_node(node):
         for item in node.get("content", []):
             if not isinstance(item, dict) or item.get("type") != "listItem":
                 continue
-            lines = _list_item_lines(item)
-            if lines:
-                blocks.append("• " + "\n".join(lines))
+            blocks.extend(_blocks_from_prefixed_lines("• ", _list_item_lines(item)))
         return blocks
 
     if node_type == "orderedList":
@@ -328,17 +555,18 @@ def _blocks_from_node(node):
         for item in node.get("content", []):
             if not isinstance(item, dict) or item.get("type") != "listItem":
                 continue
-            lines = _list_item_lines(item)
-            if lines:
-                blocks.append(f"{index}. " + "\n".join(lines))
-                index += 1
+            blocks.extend(
+                _blocks_from_prefixed_lines(f"{index}. ", _list_item_lines(item))
+            )
+            index += 1
         return blocks
 
     if node_type == "blockquote":
         blocks = []
         for child in node.get("content", []):
-            for block in _blocks_from_node(child):
-                blocks.append("> " + block)
+            blocks.extend(
+                _blocks_from_prefixed_lines("> ", _blocks_from_node(child))
+            )
         return blocks
 
     if node_type == "codeBlock":
@@ -404,8 +632,7 @@ def build_fb2(data, book_info=None, volume=None, chapter_number=None):
         volume: номер тома (приоритет над data.get("volume"))
         chapter_number: номер главы (приоритет над data.get("number"))
     """
-    fb2 = ET.Element("FictionBook")
-    fb2.set("xmlns:l", "http://www.w3.org/1999/xlink")
+    fb2 = _fb2_root()
 
     # — description —
     description = ET.SubElement(fb2, "description")
@@ -446,108 +673,142 @@ def build_fb2(data, book_info=None, volume=None, chapter_number=None):
     main_section = ET.SubElement(body, "section")
 
     # Заголовок главы (Том X, Глава Y) — номер может быть подглавой (96.1)
-    title_info = ET.SubElement(main_section, "title")
-    title_info.text = _chapter_heading(
+    title_el = ET.SubElement(main_section, "title")
+    title_p = ET.SubElement(title_el, "p")
+    title_p.text = _chapter_heading(
         volume if volume is not None else data.get("volume", 1),
         chapter_number if chapter_number is not None else data.get("number", 0),
     )
 
     # Основной контент главы
     content = data.get("content", "")
-    if content:
-        if isinstance(content, str):
-            # Если контент - строка, очищаем HTML
-            clean_content = clean_html(content)
-            paragraphs = [
-                p.strip() for p in re.split(r"\n+", clean_content) if p.strip()
-            ]
-        elif isinstance(content, dict):
-            paragraphs = _blocks_from_prosemirror(content)
-        else:
-            paragraphs = []
-
-        # Создаем параграфы в FB2
-        for para in paragraphs:
-            if para:
-                p = ET.SubElement(main_section, "p")
-                p.text = para
-
-    # — attachments —
-    for att in data.get("attachments", []):
-        url = att.get("url")
-        if not url:
-            continue
-
-        # Проверяем и исправляем URL изображения
-        if url.startswith("/"):
-            # Если URL относительный, добавляем базовый домен
-            url = "https://ranobelib.me" + url
-        elif not url.startswith(("http://", "https://")):
-            # Если URL без схемы, пропускаем
-            continue
-
-        try:
-            img_data = requests.get(url, timeout=30).content
-            bin_el = ET.SubElement(
-                fb2,
-                "binary",
-                {
-                    "id": str(att.get("id")),
-                    "content-type": att.get("mime_type", "image/jpeg"),
-                },
-            )
-            bin_el.text = base64.b64encode(img_data).decode("ascii")
-        except Exception as e:
-            # Если не удалось загрузить изображение, пропускаем его
-            print(f"    → Предупреждение: не удалось загрузить изображение {url}: {e}")
-            continue
-
-    raw = ET.tostring(fb2, encoding="utf-8")
-    pretty = minidom.parseString(raw)
-    pretty_xml = pretty.toprettyxml(indent="  ", encoding="utf-8")
-    
-    # Убираем лишние пустые строки между тегами <p>
-    if isinstance(pretty_xml, bytes):
-        # Убираем две или более пустых строки между </p> и следующим <p>
-        pretty_xml = re.sub(rb"</p>\s*\n\s*\n+(\s*)<p>", rb"</p>\n\1<p>", pretty_xml)
-        # Убираем две или более пустых строки между любым закрывающим тегом и <p>
-        pretty_xml = re.sub(rb">\s*\n\s*\n+(\s*)<p>", rb">\n\1<p>", pretty_xml)
-        # Убираем множественные пустые строки подряд (3 и более)
-        while b"\n\n\n" in pretty_xml:
-            pretty_xml = pretty_xml.replace(b"\n\n\n", b"\n\n")
+    if isinstance(content, str) and content:
+        paragraphs = _html_to_blocks(content)
+    elif isinstance(content, dict):
+        paragraphs = _blocks_from_prosemirror(content)
     else:
-        # Убираем две или более пустых строки между </p> и следующим <p>
-        pretty_xml = re.sub(r"</p>\s*\n\s*\n+(\s*)<p>", r"</p>\n\1<p>", pretty_xml)
-        # Убираем две или более пустых строки между любым закрывающим тегом и <p>
-        pretty_xml = re.sub(r">\s*\n\s*\n+(\s*)<p>", r">\n\1<p>", pretty_xml)
-        # Убираем множественные пустые строки подряд (3 и более)
-        while "\n\n\n" in pretty_xml:
-            pretty_xml = pretty_xml.replace("\n\n\n", "\n\n")
-    
-    return pretty_xml
+        paragraphs = []
+
+    attachments = data.get("attachments") or []
+    binaries = []
+    seen_urls = set()
+    image_index = 0
+    volume_info = volume if volume is not None else data.get("volume", 1)
+    chapter_num = (
+        chapter_number if chapter_number is not None else data.get("number", 0)
+    )
+
+    def insert_image(bin_id: str) -> None:
+        caption = ET.SubElement(main_section, "p")
+        caption.text = "Изображение"
+        image_el = ET.SubElement(main_section, "image")
+        image_el.set("l:href", f"#{bin_id}")
+
+    def add_image_element(ref: str) -> None:
+        nonlocal image_index
+        url = _resolve_image_url(ref, attachments)
+        if not url:
+            return
+        if url in seen_urls:
+            for bid, stored_url, _mime, _blob in binaries:
+                if stored_url == url:
+                    insert_image(bid)
+                    return
+            return
+        downloaded = _download_image(url)
+        if not downloaded:
+            return
+        blob, mime = downloaded
+        image_index += 1
+        bin_id = _binary_id(chapter_num, volume_info, image_index, url)
+        seen_urls.add(url)
+        binaries.append((bin_id, url, mime, blob))
+        insert_image(bin_id)
+
+    for para in paragraphs:
+        if not para:
+            continue
+        if _is_image_block(para):
+            add_image_element(_image_ref(para))
+            continue
+        p = ET.SubElement(main_section, "p")
+        p.text = para
+
+    for att in attachments:
+        url = _attachment_absolute_url(att)
+        if url and url not in seen_urls:
+            add_image_element(url)
+
+    for bin_id, _url, mime, blob in binaries:
+        bin_el = ET.SubElement(
+            fb2,
+            "binary",
+            {"id": bin_id, "content-type": mime},
+        )
+        bin_el.text = base64.b64encode(blob).decode("ascii")
+
+    return _serialize_fb2(fb2)
+
+
+def _find_first(parent, local_name: str):
+    for el in parent.iter():
+        if _local_tag(el) == local_name:
+            return el
+    return None
+
+
+def _find_direct(parent, local_name: str):
+    for child in parent:
+        if _local_tag(child) == local_name:
+            return child
+    return None
 
 
 def deep_copy_element(source_element, target_parent):
     """Рекурсивно копирует элемент и все его дочерние элементы"""
-    new_element = ET.SubElement(target_parent, source_element.tag)
+    new_element = ET.SubElement(target_parent, _local_tag(source_element))
 
-    # Копируем текст
     if source_element.text:
         new_element.text = source_element.text
 
-    # Копируем атрибуты
     if source_element.attrib:
-        new_element.attrib.update(source_element.attrib)
+        href_clark = f"{{{XLINK_NS}}}href"
+        for key, value in source_element.attrib.items():
+            local_key = key.split("}")[-1]
+            if key == href_clark or local_key == "href" or key == "l:href":
+                new_element.attrib["l:href"] = value
+            elif local_key in ("xmlns",) or key.startswith("xmlns"):
+                continue
+            else:
+                new_element.attrib[local_key] = value
 
-    # Копируем хвостовой текст
     if source_element.tail:
         new_element.tail = source_element.tail
 
-    # Рекурсивно копируем дочерние элементы
     for child in source_element:
         deep_copy_element(child, new_element)
 
     return new_element
+
+
+def _copy_section_content(chapter_section, new_section):
+    """Копирует секцию и чинит старую разметку картинок/заголовков."""
+    for element in chapter_section:
+        tag = _local_tag(element)
+        if tag == "title" and (element.text or "").strip() and len(list(element)) == 0:
+            title_el = ET.SubElement(new_section, "title")
+            title_p = ET.SubElement(title_el, "p")
+            title_p.text = element.text.strip()
+            continue
+        if (
+            tag == "p"
+            and len(list(element)) == 1
+            and _local_tag(element[0]) == "image"
+            and not (element.text or "").strip()
+        ):
+            deep_copy_element(element[0], new_section)
+            continue
+        deep_copy_element(element, new_section)
 
 
 def merge_chapters_to_book(book_dir: str, book_info: dict, output_file: str = None):
@@ -564,7 +825,6 @@ def merge_chapters_to_book(book_dir: str, book_info: dict, output_file: str = No
     """
     import os
     import re
-    from xml.dom import minidom
 
     print(f"\n📚 Объединяем главы в книгу...")
 
@@ -644,9 +904,7 @@ def merge_chapters_to_book(book_dir: str, book_info: dict, output_file: str = No
             part_output = f"{base}_Часть{idx}{ext}"
             print(f"📦 Объединяем часть {idx}/{len(chunks)} (глав: {len(chunk)})")
 
-        # Создаем корневой элемент
-        root = ET.Element("FictionBook")
-        root.set("xmlns:l", "http://www.w3.org/1999/xlink")
+        root = _fb2_root()
 
         # Создаем description
         description = ET.SubElement(root, "description")
@@ -698,51 +956,25 @@ def merge_chapters_to_book(book_dir: str, book_info: dict, output_file: str = No
                 tree = ET.parse(filepath)
                 chapter_root = tree.getroot()
 
-                # Находим секцию с контентом
-                chapter_body = chapter_root.find(".//body")
+                chapter_body = _find_first(chapter_root, "body")
                 if chapter_body is not None:
-                    chapter_section = chapter_body.find("section")
+                    chapter_section = _find_direct(chapter_body, "section")
                     if chapter_section is not None:
-                        # Копируем section в новый body
                         new_section = ET.SubElement(body, "section")
+                        _copy_section_content(chapter_section, new_section)
 
-                        # Копируем все элементы из секции главы
-                        for element in chapter_section:
-                            deep_copy_element(element, new_section)
+                for bin_el in chapter_root:
+                    if _local_tag(bin_el) == "binary":
+                        deep_copy_element(bin_el, root)
 
             except Exception as e:
                 print(f"    ❌ Ошибка при обработке {filename}: {e}")
                 continue
 
-        # Форматируем и сохраняем объединенный файл
         print("💾 Сохраняем объединенную книгу...")
 
-        rough_string = ET.tostring(root, encoding="utf-8")
-        reparsed = minidom.parseString(rough_string)
-        pretty_xml = reparsed.toprettyxml(indent="  ", encoding="utf-8")
-
-        # Убираем лишние пустые строки между тегами <p>
-        if isinstance(pretty_xml, bytes):
-            pretty_xml = re.sub(
-                rb"</p>\s*\n\s*\n+(\s*)<p>", rb"</p>\n\1<p>", pretty_xml
-            )
-            pretty_xml = re.sub(
-                rb">\s*\n\s*\n+(\s*)<p>", rb">\n\1<p>", pretty_xml
-            )
-            while b"\n\n\n" in pretty_xml:
-                pretty_xml = pretty_xml.replace(b"\n\n\n", b"\n\n")
-        else:
-            pretty_xml = re.sub(
-                r"</p>\s*\n\s*\n+(\s*)<p>", r"</p>\n\1<p>", pretty_xml
-            )
-            pretty_xml = re.sub(
-                r">\s*\n\s*\n+(\s*)<p>", r">\n\1<p>", pretty_xml
-            )
-            while "\n\n\n" in pretty_xml:
-                pretty_xml = pretty_xml.replace("\n\n\n", "\n\n")
-
         with open(part_output, "wb") as f:
-            f.write(pretty_xml)
+            f.write(_serialize_fb2(root))
 
         print(f"✅ Объединенная книга сохранена: {part_output}")
         print(f"📊 Всего глав объединено в части: {len(chunk)}")
