@@ -20,20 +20,29 @@ src_path = Path(__file__).parent / "src"
 sys.path.insert(0, str(src_path))
 
 from src.interface import BookDownloader
-from src.utils.auth import load_auth_token, save_auth_token
+from src.utils.auth import (
+    BROWSER_TOKEN_JS,
+    clear_auth_token,
+    load_auth_token,
+    save_auth_token,
+    token_status_label,
+)
 
 
 def show_menu():
     """Показывает главное меню"""
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("           СКАЧИВАЛЬЩИК КНИГ")
-    print("="*50)
+    print("=" * 50)
     print("1. Скачать всю книгу")
     print("2. Скачать определенные главы")
     print("3. Информация о книге")
-    print("4. Настройки")
+    print("4. Вставить токен авторизации")
+    print("5. Настройки")
     print("0. Выход")
-    print("="*50)
+    print("=" * 50)
+    print(f"🔐 Токен: {token_status_label()}")
+    print("=" * 50)
 
 
 def download_full_book():
@@ -111,33 +120,70 @@ def show_book_info():
         print(f"❌ Ошибка: {e}")
 
 
+def insert_auth_token():
+    """Показывает JS для получения токена и сохраняет вставленный Bearer."""
+    print("\n" + "=" * 50)
+    print("        ВСТАВКА ТОКЕНА АВТОРИЗАЦИИ")
+    print("=" * 50)
+    print(f"Текущий токен: {token_status_label()}")
+    print()
+    print("Как получить токен:")
+    print("  1. Откройте страницу тайтла на ranobelib.me (будучи авторизованы)")
+    print("  2. Нажмите F12 → вкладка Console (Консоль)")
+    print("  3. Вставьте код ниже и нажмите Enter")
+    print("  4. Токен скопируется в буфер — вставьте его сюда")
+    print()
+    print("-" * 50)
+    print("JavaScript (скопируйте целиком):")
+    print("-" * 50)
+    print(BROWSER_TOKEN_JS)
+    print("-" * 50)
+    print()
+    print("Вставьте Bearer-токен (или оставьте пустым, чтобы отменить):")
+    new_token = input("> ").strip()
+    if not new_token:
+        print("Отменено, токен не изменён.")
+        return
+
+    save_auth_token(new_token)
+    if load_auth_token():
+        print(f"✅ Токен сохранён. Статус: {token_status_label()}")
+    else:
+        print("❌ Не удалось распознать JWT в вставленном тексте. Попробуйте снова.")
+
+
 def show_settings():
-    """Показывает настройки и позволяет задать токен"""
+    """Показывает настройки и управление токеном"""
     print("\n⚙️ Настройки:")
     print("📁 Папка сохранения: output/")
     print("🔄 Потоков скачивания: 5")
     print("📚 Формат: FB2")
+    print(f"🔐 Токен авторизации: {token_status_label()}")
+    print()
+    print("1. Вставить / обновить токен")
+    print("2. Удалить токен")
+    print("0. Назад")
 
-    current_token = load_auth_token()
-    if current_token:
-        print("🔐 Токен авторизации: уже задан")
+    choice = input("\nВыберите действие (0-2): ").strip()
+    if choice == "1":
+        insert_auth_token()
+    elif choice == "2":
+        if load_auth_token():
+            clear_auth_token()
+            print("✅ Токен удалён.")
+        else:
+            print("Токен и так не задан.")
+    elif choice == "0":
+        return
     else:
-        print("🔐 Токен авторизации: не задан")
-
-    print("\nВведите новый Bearer токен (или оставьте пустым, чтобы не менять):")
-    new_token = input("> ").strip()
-    if new_token:
-        save_auth_token(new_token)
-        print("✅ Токен сохранён.")
-    else:
-        print("Токен не изменён.")
+        print("❌ Неверный выбор")
 
 
 def main():
     """Основная функция"""
     while True:
         show_menu()
-        choice = input("\nВыберите действие (0-4): ").strip()
+        choice = input("\nВыберите действие (0-5): ").strip()
         
         if choice == "1":
             download_full_book()
@@ -146,6 +192,8 @@ def main():
         elif choice == "3":
             show_book_info()
         elif choice == "4":
+            insert_auth_token()
+        elif choice == "5":
             show_settings()
         elif choice == "0":
             print("👋 До свидания!")

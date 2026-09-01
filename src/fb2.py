@@ -202,30 +202,68 @@ def clean_html(html_text):
     return text
 
 
+_HARD_BREAK_TYPES = frozenset({"hardBreak", "hard_break"})
+_SENTENCE_END_CHARS = ".!?…"
+
+
 def _append_text_chunk(node_text, chunk_text):
-    """Добавляет фрагмент текста, восстанавливая пробел между соседними словами."""
+    """Добавляет фрагмент текста, восстанавливая пробел на стыке узлов."""
     if not chunk_text:
         return node_text
-    if node_text and node_text[-1].isalnum() and chunk_text[0].isalnum():
-        node_text += " "
+    if not node_text:
+        return chunk_text
+    if node_text[-1].isspace() or chunk_text[0].isspace():
+        return node_text + chunk_text
+
+    left, right = node_text[-1], chunk_text[0]
+    need_space = False
+    if left.isalnum() and right.isalnum():
+        need_space = True
+    elif left in _SENTENCE_END_CHARS and (right.isalnum() or right in "«\"“("):
+        need_space = True
+    elif left in "»\"”')" and right.isalnum():
+        need_space = True
+
+    if need_space:
+        return node_text + " " + chunk_text
     return node_text + chunk_text
+
+
+def _is_hard_break(chunk):
+    return isinstance(chunk, dict) and chunk.get("type") in _HARD_BREAK_TYPES
+
+
+def _inline_text_of(chunk):
+    if isinstance(chunk, str):
+        return chunk
+    if isinstance(chunk, dict):
+        chunk_type = chunk.get("type", "")
+        if chunk_type == "text" or "text" in chunk:
+            return chunk.get("text", "") or ""
+    return ""
+
+
+def _inline_paragraphs(chunks):
+    """Режет inline-узлы ProseMirror на абзацы по hardBreak (в т.ч. одиночным)."""
+    paragraphs = []
+    current = ""
+    for chunk in chunks or []:
+        if _is_hard_break(chunk):
+            text = current.strip()
+            if text:
+                paragraphs.append(text)
+            current = ""
+            continue
+        current = _append_text_chunk(current, _inline_text_of(chunk))
+    text = current.strip()
+    if text:
+        paragraphs.append(text)
+    return paragraphs
 
 
 def _extract_inline_text(chunks):
     """Извлекает текст из inline-узлов ProseMirror (paragraph.content)."""
-    node_text = ""
-    for chunk in chunks or []:
-        if isinstance(chunk, str):
-            node_text = _append_text_chunk(node_text, chunk)
-        elif isinstance(chunk, dict):
-            chunk_type = chunk.get("type", "")
-            if chunk_type == "text":
-                node_text = _append_text_chunk(node_text, chunk.get("text", ""))
-            elif chunk_type == "hardBreak":
-                node_text += "\n"
-            elif "text" in chunk:
-                node_text = _append_text_chunk(node_text, chunk.get("text", ""))
-    return node_text
+    return "\n".join(_inline_paragraphs(chunks))
 
 
 def _extract_paragraph_text(node):
@@ -243,9 +281,7 @@ def _list_item_lines(item):
             continue
         child_type = child.get("type", "")
         if child_type == "paragraph":
-            text = _extract_paragraph_text(child).strip()
-            if text:
-                lines.append(text)
+            lines.extend(_inline_paragraphs(child.get("content", [])))
         elif child_type in ("bulletList", "orderedList", "blockquote"):
             lines.extend(_blocks_from_node(child))
         else:
@@ -259,9 +295,19 @@ def _blocks_from_node(node):
     """Возвращает список строк-параграфов для одного блочного узла ProseMirror."""
     node_type = node.get("type", "")
 
-    if node_type in ("paragraph", "heading"):
-        text = _extract_paragraph_text(node).strip()
+    if node_type == "paragraph":
+        if "content" in node:
+            return _inline_paragraphs(node.get("content", []))
+        text = (node.get("text") or "").strip()
         return [text] if text else []
+
+    if node_type == "heading":
+        parts = (
+            _inline_paragraphs(node.get("content", []))
+            if "content" in node
+            else [(node.get("text") or "").strip()]
+        )
+        return [p for p in parts if p]
 
     if node_type == "horizontalRule":
         return ["-" * 40]
@@ -397,8 +443,9 @@ def build_fb2(data, book_info=None, volume=None, chapter_number=None):
         if isinstance(content, str):
             # Если контент - строка, очищаем HTML
             clean_content = clean_html(content)
-            # Разбиваем контент на параграфы по двойным переносам строк
-            paragraphs = [p.strip() for p in clean_content.split("\n\n") if p.strip()]
+            paragraphs = [
+                p.strip() for p in re.split(r"\n+", clean_content) if p.strip()
+            ]
         elif isinstance(content, dict):
             paragraphs = _blocks_from_prosemirror(content)
         else:
