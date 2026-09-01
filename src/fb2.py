@@ -750,6 +750,31 @@ def build_fb2(data, book_info=None, volume=None, chapter_number=None):
     return _serialize_fb2(fb2)
 
 
+_COVER_ID = "cover"
+_COVER_EXT = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+
+
+def _add_coverpage(title_info) -> None:
+    coverpage = ET.SubElement(title_info, "coverpage")
+    image_el = ET.SubElement(coverpage, "image")
+    image_el.set("l:href", f"#{_COVER_ID}")
+
+
+def _add_cover_binary(root, cover_blob: bytes, mime: str) -> None:
+    bin_el = ET.SubElement(
+        root,
+        "binary",
+        {"id": _COVER_ID, "content-type": mime},
+    )
+    bin_el.text = base64.b64encode(cover_blob).decode("ascii")
+
+
 def _find_first(parent, local_name: str):
     for el in parent.iter():
         if _local_tag(el) == local_name:
@@ -874,6 +899,11 @@ def merge_chapters_to_book(book_dir: str, book_info: dict, output_file: str = No
     total_chapters = len(fb2_files)
     print(f"📊 Найдено глав для объединения: {total_chapters}")
 
+    cover_url = (book_info or {}).get("cover_url") or ""
+    cover_data = _download_image(cover_url) if cover_url else None
+    if cover_url and not cover_data:
+        print("⚠️  Не удалось скачать обложку книги")
+
     # Генерируем базовое имя выходного файла, если не указано
     if output_file is None:
         from .client import safe_filename as _safe_filename
@@ -942,6 +972,9 @@ def merge_chapters_to_book(book_dir: str, book_info: dict, output_file: str = No
             else:
                 p.text = f"{book_info.get('description')} (Часть {idx} из {len(chunks)})"
 
+        if cover_data:
+            _add_coverpage(title_info)
+
         # Создаем body
         body = ET.SubElement(root, "body")
 
@@ -970,6 +1003,31 @@ def merge_chapters_to_book(book_dir: str, book_info: dict, output_file: str = No
             except Exception as e:
                 print(f"    ❌ Ошибка при обработке {filename}: {e}")
                 continue
+
+        if cover_data:
+            cover_blob, cover_mime = cover_data
+            _add_cover_binary(root, cover_blob, cover_mime)
+            if idx == 1:
+                ext = _COVER_EXT.get(cover_mime, ".jpg")
+                cover_file = os.path.join(
+                    os.path.dirname(part_output) or ".", f"cover{ext}"
+                )
+                try:
+                    old_bytes = b""
+                    if os.path.isfile(cover_file):
+                        with open(cover_file, "rb") as cf:
+                            old_bytes = cf.read()
+                    if old_bytes == cover_blob:
+                        print("🖼  Файл обложки без изменений")
+                    else:
+                        with open(cover_file, "wb") as cf:
+                            cf.write(cover_blob)
+                        if old_bytes:
+                            print(f"🖼  Обложка заменена: {cover_file}")
+                        else:
+                            print(f"🖼  Обложка сохранена: {cover_file}")
+                except OSError as e:
+                    print(f"⚠️  Не удалось сохранить файл обложки: {e}")
 
         print("💾 Сохраняем объединенную книгу...")
 

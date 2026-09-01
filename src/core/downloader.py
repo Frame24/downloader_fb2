@@ -18,7 +18,12 @@ from ..utils.encoding import setup_console_encoding
 setup_console_encoding()
 
 # Импортируем функции из существующего модуля
-from ..client import fetch_book_info, fetch_chapters_list, fetch_chapter
+from ..client import (
+    fetch_book_info,
+    fetch_chapters_list,
+    fetch_chapter,
+    refresh_cover_in_meta,
+)
 from ..fb2 import build_fb2
 
 
@@ -65,6 +70,18 @@ class ChapterDownloader:
         self.failed_chapters: List[ChapterInfo] = []
         self.skipped_existing: int = 0
         self._skip_lock = threading.Lock()
+
+    def _refresh_cover(self, slug: str, output_dir: str) -> None:
+        try:
+            refresh_cover_in_meta(
+                output_dir,
+                slug=slug,
+                cookies=self.cookies,
+                auth_token=self.auth_token,
+                announce=False,
+            )
+        except Exception:
+            pass
 
     def _ensure_directories(self, output_dir: str) -> Tuple[str, str]:
         """Создает необходимые директории и возвращает пути"""
@@ -403,6 +420,7 @@ class ChapterDownloader:
     ) -> Tuple[int, int]:
         """Скачивает диапазон глав"""
         print(f"Скачиваем главы с {start_chapter} по {end_chapter} (включительно)")
+        self._refresh_cover(slug, output_dir)
 
         target_chapters = self._get_target_chapters(slug, start_chapter, end_chapter)
         if not target_chapters:
@@ -473,6 +491,7 @@ class ChapterDownloader:
     def download_full_book(self, slug: str, output_dir: str) -> Tuple[int, int]:
         """Скачивает всю книгу"""
         print(f"Скачиваем полную книгу: {slug}")
+        self._refresh_cover(slug, output_dir)
 
         target_chapters = self._get_target_chapters(slug)
         if not target_chapters:

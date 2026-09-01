@@ -15,7 +15,7 @@ from pathlib import Path
 from ..utils.encoding import setup_console_encoding
 setup_console_encoding()
 
-from ..client import safe_filename
+from ..client import load_book_meta, refresh_cover_in_meta, safe_filename
 from ..fb2 import build_fb2, merge_chapters_to_book
 
 
@@ -156,11 +156,15 @@ class DataConverter:
         print(f"📊 Найдено FB2 глав: {len(fb2_files)}")
 
         try:
-            # Создаем информацию о книге
+            meta = load_book_meta(output_dir)
+            cover_url = refresh_cover_in_meta(output_dir, slug=meta.get("slug") or "")
+            meta = load_book_meta(output_dir)
             book_info = {
                 "display_name": book_title,
                 "name": book_title,
-                "description": f"Книга '{book_title}' - объединенные главы",
+                "description": meta.get("description")
+                or f"Книга '{book_title}' - объединенные главы",
+                "cover_url": cover_url or meta.get("cover_url") or "",
             }
 
             # Имя файла: «Русское название.fb2», части — «Русское название_ЧастьN.fb2»

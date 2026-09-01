@@ -1,3 +1,5 @@
+import json
+import os
 import re
 import threading
 import time
@@ -64,6 +66,85 @@ def safe_filename(name: str) -> str:
 def folder_name_for_book(rus_name: str, book_id: str) -> str:
     base = safe_filename(rus_name)
     return f"{base}_{book_id}" if book_id else base
+
+
+def cover_url_from_payload(data: Dict[str, Any]) -> str:
+    """Полная обложка с карточки книги, не thumbnail."""
+    cover = data.get("cover") if isinstance(data, dict) else None
+    if isinstance(cover, str):
+        url = cover.strip()
+        if url.startswith("//"):
+            return "https:" + url
+        return url
+    if not isinstance(cover, dict):
+        return ""
+    for key in ("default", "md"):
+        val = cover.get(key)
+        if isinstance(val, str) and val.strip():
+            url = val.strip()
+            if url.startswith("//"):
+                return "https:" + url
+            if url.startswith(("http://", "https://")):
+                return url
+    return ""
+
+
+def save_book_meta(output_dir: str, info: Dict[str, Any]) -> None:
+    os.makedirs(output_dir, exist_ok=True)
+    meta = {
+        "display_name": info.get("display_name") or "",
+        "id": str(info.get("id") or ""),
+        "slug": info.get("slug") or "",
+        "cover_url": info.get("cover_url") or "",
+        "description": info.get("description") or "",
+    }
+    path = os.path.join(output_dir, "book_meta.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+
+def load_book_meta(output_dir: str) -> Dict[str, Any]:
+    path = os.path.join(output_dir, "book_meta.json")
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def refresh_cover_in_meta(
+    output_dir: str,
+    slug: Optional[str] = None,
+    cookies: Optional[Dict[str, str]] = None,
+    auth_token: Optional[str] = None,
+    announce: bool = True,
+) -> str:
+    """Заново спрашивает обложку у API и пишет URL в book_meta.json."""
+    meta = load_book_meta(output_dir)
+    slug = slug or meta.get("slug") or ""
+    if not slug:
+        return meta.get("cover_url") or ""
+
+    info = fetch_book_info(slug, cookies=cookies, auth_token=auth_token) or {}
+    new_url = info.get("cover_url") or ""
+    old_url = meta.get("cover_url") or ""
+    merged = {
+        "display_name": info.get("display_name") or meta.get("display_name") or "",
+        "id": str(info.get("id") or meta.get("id") or ""),
+        "slug": slug,
+        "cover_url": new_url or old_url,
+        "description": info.get("description") or meta.get("description") or "",
+    }
+    save_book_meta(output_dir, merged)
+    if announce:
+        if new_url and new_url != old_url and old_url:
+            print("🖼  Обложка на сайте изменилась — скачаем новую")
+        elif new_url:
+            print("🖼  Обложка проверена")
+    return merged["cover_url"]
 
 
 def _jwt_from_cookies(cookies: Optional[Dict[str, str]]) -> Optional[str]:
@@ -176,6 +257,7 @@ def _book_info_from_manga_payload(slug: str, data: Dict[str, Any]) -> Dict[str, 
         "chapters_count": chapters_count,
         "rus_name": rus,
         "eng_name": eng,
+        "cover_url": cover_url_from_payload(data),
     }
 
 
@@ -192,6 +274,7 @@ def _book_info_fallback(slug: str, chapters_count: int = 0) -> Dict[str, Any]:
         "chapters_count": chapters_count,
         "rus_name": "",
         "eng_name": "",
+        "cover_url": "",
     }
 
 

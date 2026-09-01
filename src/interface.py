@@ -20,6 +20,7 @@ from .client import (
     fetch_book_info,
     fetch_chapters_list,
     folder_name_for_book,
+    save_book_meta,
 )
 from .utils.cookies import cookies_for_session
 from .utils.auth import load_auth_token, save_auth_token
@@ -33,6 +34,7 @@ class DownloadResult:
     output_dir: str
     book_title: str
     total_chapters: int
+    cover_url: str = ""
 
 
 @dataclass
@@ -44,6 +46,8 @@ class BookInfo:
     available_chapters: list
     book_id: str = ""
     folder_name: str = ""
+    cover_url: str = ""
+    description: str = ""
 
 
 class BookDownloader:
@@ -92,6 +96,8 @@ class BookDownloader:
                 book_id=book_id,
                 folder_name=book_data.get("folder_name")
                 or folder_name_for_book(rus_title, book_id),
+                cover_url=book_data.get("cover_url") or "",
+                description=book_data.get("description") or "",
             )
         except Exception as e:
             raise ValueError(f"Не удалось получить информацию о книге: {e}")
@@ -112,6 +118,16 @@ class BookDownloader:
         book_title = title or book_info.title
         book_id = book_info.book_id or book_id_from_slug(book_info.slug)
         output_dir = f"{self.output_base}/{folder_name_for_book(book_title, book_id)}"
+        save_book_meta(
+            output_dir,
+            {
+                "display_name": book_title,
+                "id": book_id,
+                "slug": book_info.slug,
+                "cover_url": book_info.cover_url,
+                "description": book_info.description,
+            },
+        )
         
         # Скачиваем главы
         successful, failed = self.downloader.download_chapters_range(
@@ -123,7 +139,8 @@ class BookDownloader:
             failed=failed,
             output_dir=output_dir,
             book_title=book_title,
-            total_chapters=book_info.total_chapters
+            total_chapters=book_info.total_chapters,
+            cover_url=book_info.cover_url,
         )
     
     def convert_to_fb2(self, result: DownloadResult, cleanup_individual_files: bool = True) -> bool:

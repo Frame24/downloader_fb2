@@ -144,10 +144,53 @@ def test_fb2_title_includes_subchapter():
 
 
 def test_folder_name_is_rus_title_and_id():
-    from src.client import folder_name_for_book, safe_filename
+    from src.client import cover_url_from_payload, folder_name_for_book, safe_filename
 
     assert folder_name_for_book("Рай Реинкарнации", "42087") == "Рай Реинкарнации_42087"
     assert safe_filename("Рай Реинкарнации") == "Рай Реинкарнации"
+    assert cover_url_from_payload(
+        {
+            "cover": {
+                "filename": "56761e0c-1134-4b63-80c6-658a747c980f",
+                "thumbnail": "https://cover.cdnlibs.org/thumb.jpg",
+                "default": "https://cover.cdnlibs.org/full.jpg",
+                "md": "https://cover.cdnlibs.org/full.jpg",
+            }
+        }
+    ) == "https://cover.cdnlibs.org/full.jpg"
+    assert cover_url_from_payload({"cover": {"thumbnail": "https://x/t.jpg"}}) == ""
+
+
+def test_refresh_cover_replaces_stale_url(tmp_path, monkeypatch):
+    from src import client as client_mod
+    from src.client import load_book_meta, save_book_meta, refresh_cover_in_meta
+
+    save_book_meta(
+        str(tmp_path),
+        {
+            "display_name": "Рай Реинкарнации",
+            "id": "42087",
+            "slug": "42087--reincarnation-paradise",
+            "cover_url": "https://cover.cdnlibs.org/old.jpg",
+        },
+    )
+    monkeypatch.setattr(
+        client_mod,
+        "fetch_book_info",
+        lambda slug, cookies=None, auth_token=None: {
+            "display_name": "Рай Реинкарнации",
+            "id": "42087",
+            "cover_url": "https://cover.cdnlibs.org/new.jpg",
+            "description": "",
+        },
+    )
+    url = refresh_cover_in_meta(
+        str(tmp_path),
+        slug="42087--reincarnation-paradise",
+        announce=False,
+    )
+    assert url == "https://cover.cdnlibs.org/new.jpg"
+    assert load_book_meta(str(tmp_path))["cover_url"] == url
 
 
 def test_html_keeps_images_in_order():
@@ -249,3 +292,37 @@ def test_merge_unwraps_old_image_in_empty_p(tmp_path):
     assert '<image l:href="#img_v1_c2_1_pic_jpg"' in text
     assert "<title>" in text and "<p>Том 1, Глава 2</p>" in text
     assert 'id="img_v1_c2_1_pic_jpg"' in text
+
+
+def test_merge_adds_coverpage(tmp_path, monkeypatch):
+    from src import fb2 as fb2_mod
+    from src.fb2 import merge_chapters_to_book
+
+    jpeg = b"\xff\xd8" + b"y" * 60
+    monkeypatch.setattr(
+        fb2_mod, "_download_image", lambda url: (jpeg, "image/jpeg")
+    )
+    chapter = """<?xml version="1.0" encoding="utf-8"?>
+<FictionBook>
+  <description><title-info><book-title>x</book-title></title-info></description>
+  <body><section><title><p>Том 1, Глава 1</p></title><p>Текст.</p></section></body>
+</FictionBook>
+"""
+    (tmp_path / "1_Том1_Глава_1.fb2").write_text(chapter, encoding="utf-8")
+    out = tmp_path / "book.fb2"
+    merge_chapters_to_book(
+        str(tmp_path),
+        {
+            "display_name": "Рай Реинкарнации",
+            "cover_url": "https://cover.cdnlibs.org/full.jpg",
+        },
+        str(out),
+    )
+    text = out.read_text(encoding="utf-8")
+    assert "<coverpage>" in text
+    assert '<image l:href="#cover"' in text
+    assert 'id="cover"' in text
+    assert 'content-type="image/jpeg"' in text
+    cover_file = tmp_path / "cover.jpg"
+    assert cover_file.exists()
+    assert cover_file.read_bytes() == jpeg

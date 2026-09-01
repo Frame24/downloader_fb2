@@ -21,7 +21,7 @@ sys.path.insert(0, str(src_path))
 
 from src.core.downloader import ChapterDownloader, DownloadConfig
 from src.core.converter import DataConverter
-from src.client import extract_info, fetch_book_info, folder_name_for_book
+from src.client import extract_info, fetch_book_info, folder_name_for_book, save_book_meta
 
 
 def main():
@@ -56,6 +56,7 @@ def main():
         return
     
     output_dir = f"output/{book_info.get('folder_name') or folder_name_for_book(book_title, str(book_info.get('id') or ''))}"
+    save_book_meta(output_dir, book_info)
     
     print(f"\nПапка для сохранения: {output_dir}")
     print("\nНачинаем скачивание...")
