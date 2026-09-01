@@ -67,6 +67,27 @@ def download_full_book():
         print(f"❌ Ошибка: {e}")
 
 
+def _parse_chapter_number(value) -> int:
+    """Берёт целую часть номера главы: '-1', '0', '12.5' → -1, 0, 12."""
+    s = str(value).strip()
+    if "." in s:
+        return int(s.split(".")[0])
+    return int(s)
+
+
+def _first_chapter_from_list(available_chapters) -> int:
+    """Первая глава в списке книги, даже если это 0 или отрицательный номер."""
+    parsed = []
+    for ch in available_chapters:
+        try:
+            parsed.append(_parse_chapter_number(ch))
+        except (ValueError, IndexError, TypeError):
+            continue
+    if not parsed:
+        raise ValueError("Нет доступных глав")
+    return min(parsed)
+
+
 def download_chapters():
     """Скачивает определенные главы"""
     url = input("\n📖 Введите URL книги: ").strip()
@@ -75,15 +96,26 @@ def download_chapters():
         return
     
     try:
-        start = int(input("📖 Начальная глава: "))
+        auth_token = load_auth_token()
+        downloader = BookDownloader(auth_token=auth_token)
+        book_info = downloader.get_book_info(url)
+        first_chapter = _first_chapter_from_list(book_info.available_chapters)
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        return
+
+    print(f"\n📚 Книга: {book_info.title}")
+    print(f"📖 Глав в списке: {book_info.total_chapters} (первая: {first_chapter})")
+
+    try:
+        start_raw = input(f"📖 Начальная глава (Enter — {first_chapter}): ").strip()
+        start = first_chapter if not start_raw else int(start_raw)
         end = int(input("📖 Конечная глава (включительно): "))
         
         if start > end:
             print("❌ Начальная глава не может быть больше конечной")
             return
         
-        auth_token = load_auth_token()
-        downloader = BookDownloader(auth_token=auth_token)
         print(f"🚀 Скачиваем главы {start}-{end} (включительно)...")
         result = downloader.full_download(url, start, end)
         
