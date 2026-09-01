@@ -212,32 +212,19 @@ class ChapterDownloader:
 
                 if not data or "content" not in data:
                     if attempt < self.config.max_retries - 1:
-                        print(
-                            f"Глава {chapter_info.chapter_num}: Нет данных "
-                            f"(попытка {attempt + 1}/{self.config.max_retries})"
-                        )
-                        # Увеличиваем задержку при ошибках
                         delay = (
                             self.config.retry_delay * (2**attempt)
                             if self.config.exponential_backoff
                             else self.config.retry_delay
                         )
-                        print(f"   Ждем {delay} секунд перед повторной попыткой...")
                         time.sleep(delay)
                         continue
-                    print(
-                        f"Глава {chapter_info.chapter_num}: Нет данных после всех попыток"
-                    )
                     return False
 
                 # Сохраняем исходные данные
                 if self.config.save_raw_data:
                     if not self._save_raw_data(data, chapter_info, raw_dir):
                         if attempt < self.config.max_retries - 1:
-                            print(
-                                f"Глава {chapter_info.chapter_num}: Ошибка сохранения "
-                                f"(попытка {attempt + 1}/{self.config.max_retries})"
-                            )
                             time.sleep(self.config.error_timeout)
                             continue
                         return False
@@ -246,34 +233,21 @@ class ChapterDownloader:
                 if self.config.save_fb2:
                     if not self._save_fb2(data, chapter_info, fb2_dir):
                         if attempt < self.config.max_retries - 1:
-                            print(
-                                f"Глава {chapter_info.chapter_num}: Ошибка FB2 "
-                                f"(попытка {attempt + 1}/{self.config.max_retries})"
-                            )
                             time.sleep(self.config.error_timeout)
                             continue
                         return False
 
                 return True
 
-            except (ValueError, ConnectionError, TimeoutError, KeyError) as e:
+            except (ValueError, ConnectionError, TimeoutError, KeyError):
                 if attempt < self.config.max_retries - 1:
-                    print(
-                        f"Глава {chapter_info.chapter_num}: Ошибка - {e} "
-                        f"(попытка {attempt + 1}/{self.config.max_retries})"
-                    )
-                    # Увеличиваем задержку при ошибках
                     delay = (
                         self.config.retry_delay * (2**attempt)
                         if self.config.exponential_backoff
                         else self.config.retry_delay
                     )
-                    print(f"   Ждем {delay} секунд перед повторной попыткой...")
                     time.sleep(delay)
                     continue
-                print(
-                    f"Глава {chapter_info.chapter_num}: Ошибка после всех попыток - {e}"
-                )
                 return False
 
         return False
@@ -394,8 +368,7 @@ class ChapterDownloader:
                     else:
                         failed += 1
                         self.failed_chapters.append(chapter)
-                except (ValueError, ConnectionError, TimeoutError) as e:
-                    print(f"Критическая ошибка для главы {chapter.chapter_num}: {e}")
+                except (ValueError, ConnectionError, TimeoutError):
                     failed += 1
                     self.failed_chapters.append(chapter)
 
@@ -406,13 +379,12 @@ class ChapterDownloader:
                     "█" * int(progress_percent / 2) +
                     "░" * (50 - int(progress_percent / 2))
                 )
-                print(
-                    f"\r📖 [{progress_bar}] {total}/{len(chapters)} "
+                line = (
+                    f"📖 [{progress_bar}] {total}/{len(chapters)} "
                     f"({progress_percent:.1f}%) | ✅ {successful} | ❌ {failed} | "
-                    f"Текущая: {chapter.chapter_num}",
-                    end="",
-                    flush=True,
+                    f"глава {chapter.chapter_num}"
                 )
+                print("\r" + line.ljust(100), end="", flush=True)
 
         # Финальный вывод прогресса
         print(
@@ -452,11 +424,7 @@ class ChapterDownloader:
 
         # Если есть неудачные главы, пробуем скачать их повторно
         if failed > 0 and self.failed_chapters:
-            print(f"\nПовторная попытка скачивания {failed} неудачных глав...")
-            print("Список неудачных глав:")
-            for chapter in self.failed_chapters:
-                print(f"   - Глава {chapter.chapter_num}: {chapter.title}")
-            print("Увеличиваем задержки и таймауты для стабильности...")
+            print(f"\nДокачиваем {failed} глав после ограничения API...")
 
             # Создаем временную конфигурацию с увеличенными задержками
             retry_config = DownloadConfig(
@@ -498,11 +466,7 @@ class ChapterDownloader:
             self.failed_chapters = retry_downloader.failed_chapters
 
             if retry_successful > 0:
-                print(
-                    f"Повторная попытка успешна! Дополнительно скачано: {retry_successful} глав"
-                )
-            else:
-                print("Повторная попытка не дала результатов")
+                print(f"Докачано ещё {retry_successful} глав")
 
         return successful, failed
 
@@ -521,11 +485,7 @@ class ChapterDownloader:
 
         # Если есть неудачные главы, пробуем скачать их повторно
         if failed > 0 and self.failed_chapters:
-            print(f"\nПовторная попытка скачивания {failed} неудачных глав...")
-            print("Список неудачных глав:")
-            for chapter in self.failed_chapters:
-                print(f"   - Глава {chapter.chapter_num}: {chapter.title}")
-            print("Увеличиваем задержки и таймауты для стабильности...")
+            print(f"\nДокачиваем {failed} глав после ограничения API...")
 
             # Создаем временную конфигурацию с увеличенными задержками
             retry_config = DownloadConfig(
@@ -567,10 +527,6 @@ class ChapterDownloader:
             self.failed_chapters = retry_downloader.failed_chapters
 
             if retry_successful > 0:
-                print(
-                    f"Повторная попытка успешна! Дополнительно скачано: {retry_successful} глав"
-                )
-            else:
-                print("Повторная попытка не дала результатов")
+                print(f"Докачано ещё {retry_successful} глав")
 
         return successful, failed

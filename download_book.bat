@@ -27,15 +27,10 @@ if not exist "console_downloader.py" (
 
 REM Активируем виртуальную среду если она есть
 if exist ".venv\Scripts\activate.bat" (
-    echo Активируем виртуальную среду...
     call .venv\Scripts\activate.bat
-    echo Виртуальная среда активирована!
-) else (
-    echo Виртуальная среда не найдена, используем системный Python
 )
 
 REM Проверяем зависимости
-echo Проверяем зависимости...
 python -c "import requests" >nul 2>&1
 if errorlevel 1 (
     echo Устанавливаем зависимости...
@@ -46,9 +41,6 @@ if errorlevel 1 (
         exit /b 1
     )
 )
-
-echo Все готово к работе!
-echo.
 
 REM Выбор режима работы
 echo Выберите режим работы:

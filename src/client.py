@@ -1,4 +1,5 @@
 import re
+import threading
 import time
 import requests
 from typing import Optional, Dict, Any, List
@@ -24,6 +25,27 @@ DEFAULT_API_HEADERS = {
     # Без Site-Id эндпоинт /api/manga/{slug} отдаёт 404; 3 = ranobelib.me
     "Site-Id": "3",
 }
+
+_auth_warn_lock = threading.Lock()
+_auth_warned = False
+
+
+def _warn_stale_token() -> None:
+    """Один раз за процесс — иначе при 401 сыпется на каждую главу."""
+    global _auth_warned
+    with _auth_warn_lock:
+        if _auth_warned:
+            return
+        _auth_warned = True
+    print("\n🔐 Токен не работает или устарел. Обновите его в меню.")
+
+
+def _sleep_before_retry(error: Optional[BaseException], attempt: int) -> None:
+    """Пауза перед повтором. 429/5xx — штатное поведение API, в консоль не пишем."""
+    if error is not None and "429" in str(error):
+        time.sleep(ERROR_TIMEOUT * (2**attempt))
+    else:
+        time.sleep(RETRY_DELAY * (2**attempt))
 
 
 def book_id_from_slug(slug: str) -> str:
@@ -193,7 +215,7 @@ def fetch_book_info(
                 headers=headers,
             )
             if resp.status_code in (401, 403) and auth_token:
-                print("🔐 Bearer-токен не работает или устарел (API вернул 401/403). Обновите токен.")
+                _warn_stale_token()
                 return _book_info_fallback(slug)
             resp.raise_for_status()
             raw = resp.json().get("data")
@@ -216,43 +238,10 @@ def fetch_book_info(
                         pass
                 return info
             raise ValueError("пустой ответ API о книге")
-        except requests.exceptions.Timeout:
-            print(
-                f"  Таймаут при получении информации о книге (попытка {attempt + 1}/{max_retries})"
-            )
+        except (requests.exceptions.Timeout, requests.exceptions.RequestException, ValueError, KeyError) as e:
             if attempt < max_retries - 1:
-                delay = RETRY_DELAY * (2**attempt)
-                print(f"    Ждем {delay} секунд...")
-                time.sleep(delay)
-        except requests.exceptions.RequestException as e:
-            print(
-                f"  Ошибка сети при получении информации о книге: {e} "
-                f"(попытка {attempt + 1}/{max_retries})"
-            )
-            if attempt < max_retries - 1:
-                if "429" in str(e):
-                    delay = ERROR_TIMEOUT * (2**attempt)
-                    print(f"    Rate limit - ждем {delay} секунд...")
-                    time.sleep(delay)
-                else:
-                    delay = RETRY_DELAY * (2**attempt)
-                    print(f"    Ждем {delay} секунд...")
-                    time.sleep(delay)
-        except (ValueError, KeyError) as e:
-            print(
-                f"  Неожиданная ошибка при получении информации о книге: {e} "
-                f"(попытка {attempt + 1}/{max_retries})"
-            )
-            if attempt < max_retries - 1:
-                delay = RETRY_DELAY * (2**attempt)
-                print(f"    Ждем {delay} секунд...")
-                time.sleep(delay)
+                _sleep_before_retry(e, attempt)
 
-    print("  Не удалось получить информацию о книге после всех попыток")
-    print(
-        "  Подсказка: 18+ и часть каталога требуют сессии — cookies из браузера, "
-        "JWT в cookie (подхватывается автоматически) или --auth-token."
-    )
     return _book_info_fallback(slug)
 
 
@@ -276,7 +265,7 @@ def fetch_chapters_list(
                 headers=_api_headers(auth_token, cookies),
             )
             if resp.status_code in (401, 403) and auth_token:
-                print("🔐 Bearer-токен не работает или устарел (API вернул 401/403). Обновите токен.")
+                _warn_stale_token()
                 return []
             resp.raise_for_status()
             raw = resp.json().get("data", [])
@@ -316,45 +305,10 @@ def fetch_chapters_list(
 
                 result.append((full_number, api_branch_id, volume))
             return sorted(result, key=lambda x: (x[2], x[0]))  # Сортировка по тому, затем по номеру
-        except requests.exceptions.Timeout:
-            print(
-                f"  Таймаут при получении списка глав (попытка {attempt + 1}/{max_retries})"
-            )
+        except (requests.exceptions.Timeout, requests.exceptions.RequestException, ValueError, KeyError) as e:
             if attempt < max_retries - 1:
-                delay = RETRY_DELAY * (2**attempt)
-                print(f"    Ждем {delay} секунд...")
-                time.sleep(delay)
-        except requests.exceptions.RequestException as e:
-            print(
-                f"  Ошибка сети при получении списка глав: {e} "
-                f"(попытка {attempt + 1}/{max_retries})"
-            )
-            if attempt < max_retries - 1:
-                if "429" in str(e):
-                    delay = ERROR_TIMEOUT * (2**attempt)
-                    print(f"    Rate limit - ждем {delay} секунд...")
-                    time.sleep(delay)
-                else:
-                    delay = RETRY_DELAY * (2**attempt)
-                    print(f"    Ждем {delay} секунд...")
-                    time.sleep(delay)
-        except (ValueError, KeyError) as e:
-            print(
-                f"  Неожиданная ошибка при получении списка глав: {e} "
-                f"(попытка {attempt + 1}/{max_retries})"
-            )
-            if attempt < max_retries - 1:
-                delay = RETRY_DELAY * (2**attempt)
-                print(f"    Ждем {delay} секунд...")
-                time.sleep(delay)
+                _sleep_before_retry(e, attempt)
 
-    print("  Не удалось получить список глав после всех попыток")
-    print(
-        "  Подсказка: войдите на ranobelib.me, подтвердите 18+ в профиле, "
-        "закройте браузер и снова --cookies …; либо --auth-token из DevTools "
-        "(запрос к api.cdnlibs.org → Authorization: Bearer …); "
-        "либо --cookies-file с экспортом cookies для ranobelib.me."
-    )
     return []
 
 
@@ -385,7 +339,7 @@ def fetch_chapter(
                 headers=headers,
             )
             if resp.status_code in (401, 403) and auth_token:
-                print("🔐 Bearer-токен не работает или устарел (API вернул 401/403). Обновите токен.")
+                _warn_stale_token()
                 return {}
             resp.raise_for_status()
             data = resp.json().get("data", {})
@@ -406,39 +360,8 @@ def fetch_chapter(
                 if isinstance(alt, dict) and alt.get("content"):
                     return alt
             return data if isinstance(data, dict) else {}
-        except requests.exceptions.Timeout:
-            print(
-                f"    Таймаут при получении главы {number} (попытка {attempt + 1}/{max_retries})"
-            )
+        except (requests.exceptions.Timeout, requests.exceptions.RequestException, ValueError, KeyError) as e:
             if attempt < max_retries - 1:
-                # Увеличиваем задержку при таймаутах
-                delay = RETRY_DELAY * (2**attempt)
-                print(f"      Ждем {delay} секунд...")
-                time.sleep(delay)
-        except requests.exceptions.RequestException as e:
-            print(
-                f"    Ошибка сети при получении главы {number}: {e} "
-                f"(попытка {attempt + 1}/{max_retries})"
-            )
-            if attempt < max_retries - 1:
-                # При ошибках 429 (Too Many Requests) увеличиваем задержку
-                if "429" in str(e):
-                    delay = ERROR_TIMEOUT * (2**attempt)
-                    print(f"      Rate limit - ждем {delay} секунд...")
-                    time.sleep(delay)
-                else:
-                    delay = RETRY_DELAY * (2**attempt)
-                    print(f"      Ждем {delay} секунд...")
-                    time.sleep(delay)
-        except (ValueError, KeyError) as e:
-            print(
-                f"    Неожиданная ошибка при получении главы {number}: {e} "
-                f"(попытка {attempt + 1}/{max_retries})"
-            )
-            if attempt < max_retries - 1:
-                delay = RETRY_DELAY * (2**attempt)
-                print(f"      Ждем {delay} секунд...")
-                time.sleep(delay)
+                _sleep_before_retry(e, attempt)
 
-    print(f"    Не удалось получить главу {number} после всех попыток")
     return {}
