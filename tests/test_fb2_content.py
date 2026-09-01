@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from src.fb2 import (
     _append_text_chunk,
     _blocks_from_prosemirror,
+    _chapter_heading,
     _inline_paragraphs,
     build_fb2,
 )
@@ -118,3 +119,24 @@ def test_fb2_emits_separate_p_tags():
     text = fb2.decode("utf-8") if isinstance(fb2, bytes) else fb2
     assert text.count("<p>Раз.</p>") == 1
     assert text.count("<p>Два.</p>") == 1
+
+
+def test_subchapter_heading_keeps_dotted_number():
+    assert _chapter_heading(1, 96) == "Том 1, Глава 96"
+    assert _chapter_heading(1, "96.1") == "Том 1, Глава 96.1"
+    assert _chapter_heading(1, "96.2") == "Том 1, Глава 96.2"
+    assert _chapter_heading("1", "51.6") == "Том 1, Глава 51.6"
+
+
+def test_fb2_title_includes_subchapter():
+    data = {"name": "x", "volume": 1, "number": "96.1", "content": "", "attachments": []}
+    fb2 = build_fb2(data, chapter_number="96.1", volume=1)
+    text = fb2.decode("utf-8") if isinstance(fb2, bytes) else fb2
+    assert "Том 1, Глава 96.1" in text
+
+
+def test_folder_name_is_rus_title_and_id():
+    from src.client import folder_name_for_book, safe_filename
+
+    assert folder_name_for_book("Рай Реинкарнации", "42087") == "Рай Реинкарнации_42087"
+    assert safe_filename("Рай Реинкарнации") == "Рай Реинкарнации"

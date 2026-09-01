@@ -14,7 +14,13 @@ from dataclasses import dataclass
 
 from .core.downloader import ChapterDownloader, DownloadConfig
 from .core.converter import DataConverter
-from .client import extract_info, fetch_book_info, fetch_chapters_list
+from .client import (
+    book_id_from_slug,
+    extract_info,
+    fetch_book_info,
+    fetch_chapters_list,
+    folder_name_for_book,
+)
 from .utils.cookies import cookies_for_session
 from .utils.auth import load_auth_token, save_auth_token
 
@@ -36,6 +42,8 @@ class BookInfo:
     slug: str
     total_chapters: int
     available_chapters: list
+    book_id: str = ""
+    folder_name: str = ""
 
 
 class BookDownloader:
@@ -74,11 +82,16 @@ class BookDownloader:
                 branch_ui=branch_ui,
             )
             
+            rus_title = book_data.get("display_name") or "Книга"
+            book_id = str(book_data.get("id") or "") or book_id_from_slug(slug)
             return BookInfo(
-                title=book_data.get("display_name", f"Книга_{slug}"),
+                title=rus_title,
                 slug=slug,
-                total_chapters=book_data.get("chapters_count", 0),
-                available_chapters=[ch[0] for ch in chapters]  # Номера глав
+                total_chapters=len(chapters) or book_data.get("chapters_count", 0),
+                available_chapters=[ch[0] for ch in chapters],
+                book_id=book_id,
+                folder_name=book_data.get("folder_name")
+                or folder_name_for_book(rus_title, book_id),
             )
         except Exception as e:
             raise ValueError(f"Не удалось получить информацию о книге: {e}")
@@ -95,9 +108,10 @@ class BookDownloader:
         if end is None:
             end = book_info.total_chapters
         
-        # Создаем папку для сохранения
+        # Папка: «Русское название_айди». В FB2/частях — только русское название.
         book_title = title or book_info.title
-        output_dir = f"{self.output_base}/{book_title}"
+        book_id = book_info.book_id or book_id_from_slug(book_info.slug)
+        output_dir = f"{self.output_base}/{folder_name_for_book(book_title, book_id)}"
         
         # Скачиваем главы
         successful, failed = self.downloader.download_chapters_range(

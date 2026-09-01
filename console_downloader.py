@@ -7,7 +7,6 @@
 
 import sys
 from pathlib import Path
-from datetime import datetime
 
 # Настройка кодировки для Windows консоли
 try:
@@ -22,7 +21,7 @@ sys.path.insert(0, str(src_path))
 
 from src.core.downloader import ChapterDownloader, DownloadConfig
 from src.core.converter import DataConverter
-from src.client import extract_info, fetch_book_info
+from src.client import extract_info, fetch_book_info, folder_name_for_book
 
 
 def main():
@@ -48,7 +47,7 @@ def main():
     # Получаем информацию о книге
     try:
         book_info = fetch_book_info(slug)
-        book_title = book_info.get("display_name", f"Книга_{slug}")
+        book_title = book_info.get("display_name", "Книга")
         chapters_count = book_info.get("chapters_count", 0)
         print(f"Название книги: {book_title}")
         print(f"Количество глав: {chapters_count}")
@@ -56,9 +55,7 @@ def main():
         print(f"❌ Не удалось получить информацию о книге: {e}")
         return
     
-    # Создаем папку для сохранения
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    output_dir = f"output/{book_title}_{timestamp}"
+    output_dir = f"output/{book_info.get('folder_name') or folder_name_for_book(book_title, str(book_info.get('id') or ''))}"
     
     print(f"\nПапка для сохранения: {output_dir}")
     print("\nНачинаем скачивание...")

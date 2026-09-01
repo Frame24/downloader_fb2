@@ -366,6 +366,34 @@ def _blocks_from_prosemirror(content):
     return blocks
 
 
+def _is_dotted_number(value) -> bool:
+    if value is None or value is False:
+        return False
+    s = str(value).strip()
+    if not s:
+        return False
+    parts = [p for p in s.split(".") if p != ""]
+    return bool(parts) and all(p.isdigit() for p in parts)
+
+
+def _chapter_heading(volume, chapter_num) -> str:
+    """Заголовок секции: «Том X, Глава Y», Y может быть 96.1."""
+    has_volume = _is_dotted_number(volume) and float(volume) > 0
+    has_chapter = _is_dotted_number(chapter_num)
+    if has_chapter:
+        # «0.1» оставляем, «0» без дробной части — нет
+        parts = [p for p in str(chapter_num).strip().split(".") if p != ""]
+        has_chapter = any(int(p) > 0 for p in parts)
+
+    if has_volume and has_chapter:
+        return f"Том {volume}, Глава {chapter_num}"
+    if has_volume:
+        return f"Том {volume}"
+    if has_chapter:
+        return f"Глава {chapter_num}"
+    return "Без названия"
+
+
 def build_fb2(data, book_info=None, volume=None, chapter_number=None):
     """
     Создает FB2 файл из данных главы.
@@ -417,25 +445,12 @@ def build_fb2(data, book_info=None, volume=None, chapter_number=None):
     # Создаем основную секцию
     main_section = ET.SubElement(body, "section")
 
-    # Заголовок главы (Том X, Глава Y)
+    # Заголовок главы (Том X, Глава Y) — номер может быть подглавой (96.1)
     title_info = ET.SubElement(main_section, "title")
-
-    # Формируем заголовок как "Том X, Глава Y"
-    # Используем переданные параметры, если они есть, иначе берем из data
-    volume_info = volume if volume is not None else data.get("volume", 1)
-    chapter_num = (
-        chapter_number if chapter_number is not None else data.get("number", 0)
+    title_info.text = _chapter_heading(
+        volume if volume is not None else data.get("volume", 1),
+        chapter_number if chapter_number is not None else data.get("number", 0),
     )
-
-    if volume_info and str(volume_info).isdigit() and int(volume_info) > 0:
-        if chapter_num and str(chapter_num).isdigit() and int(chapter_num) > 0:
-            title_info.text = f"Том {volume_info}, Глава {chapter_num}"
-        else:
-            title_info.text = f"Том {volume_info}"
-    elif chapter_num and str(chapter_num).isdigit() and int(chapter_num) > 0:
-        title_info.text = f"Глава {chapter_num}"
-    else:
-        title_info.text = "Без названия"
 
     # Основной контент главы
     content = data.get("content", "")
@@ -601,13 +616,13 @@ def merge_chapters_to_book(book_dir: str, book_info: dict, output_file: str = No
 
     # Генерируем базовое имя выходного файла, если не указано
     if output_file is None:
+        from .client import safe_filename as _safe_filename
+
         book_name = book_info.get("display_name", book_info.get("name", "Книга"))
-        safe_name = "".join(c for c in book_name if c.isalnum() or c in " -_").rstrip()
-        current_time = datetime.now()
-        time_str = current_time.strftime("%Y-%m-%d_%H-%M-%S")
+        safe_name = _safe_filename(book_name)
         results_dir = "results"
         os.makedirs(results_dir, exist_ok=True)
-        base_output = os.path.join(results_dir, f"{safe_name}_{time_str}.fb2")
+        base_output = os.path.join(results_dir, f"{safe_name}.fb2")
     else:
         base_output = output_file
 

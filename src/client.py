@@ -21,7 +21,27 @@ DEFAULT_API_HEADERS = {
     "Referer": "https://ranobelib.me/",
     "Origin": "https://ranobelib.me",
     "Accept": "application/json",
+    # Без Site-Id эндпоинт /api/manga/{slug} отдаёт 404; 3 = ranobelib.me
+    "Site-Id": "3",
 }
+
+
+def book_id_from_slug(slug: str) -> str:
+    m = re.match(r"^(\d+)", slug or "")
+    return m.group(1) if m else ""
+
+
+def safe_filename(name: str) -> str:
+    """Имя для папки/файла: кириллица сохраняется, запрещённые символы Windows убираются."""
+    cleaned = re.sub(r'[<>:"/\\|?*]', "", name or "")
+    cleaned = "".join(c for c in cleaned if c.isalnum() or c in " -_.")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .")
+    return cleaned or "Книга"
+
+
+def folder_name_for_book(rus_name: str, book_id: str) -> str:
+    base = safe_filename(rus_name)
+    return f"{base}_{book_id}" if book_id else base
 
 
 def _jwt_from_cookies(cookies: Optional[Dict[str, str]]) -> Optional[str]:
@@ -114,44 +134,88 @@ def extract_info(url: str):
     raise ValueError(f"URL не распознан: {url}")
 
 
+def _book_info_from_manga_payload(slug: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    rus = str(data.get("rus_name") or "").strip()
+    eng = str(data.get("eng_name") or data.get("name") or "").strip()
+    display = rus or eng or "Книга"
+    book_id = str(data.get("id") or "") or book_id_from_slug(slug)
+    chap_count = data.get("chap_count")
+    try:
+        chapters_count = int(chap_count) if chap_count is not None else 0
+    except (TypeError, ValueError):
+        chapters_count = 0
+    return {
+        "display_name": display,
+        "name": slug,
+        "slug": slug,
+        "id": book_id,
+        "folder_name": folder_name_for_book(display, book_id),
+        "description": str(data.get("summary") or ""),
+        "chapters_count": chapters_count,
+        "rus_name": rus,
+        "eng_name": eng,
+    }
+
+
+def _book_info_fallback(slug: str, chapters_count: int = 0) -> Dict[str, Any]:
+    book_id = book_id_from_slug(slug)
+    display = "Книга"
+    return {
+        "display_name": display,
+        "name": slug,
+        "slug": slug,
+        "id": book_id,
+        "folder_name": folder_name_for_book(display, book_id),
+        "description": "",
+        "chapters_count": chapters_count,
+        "rus_name": "",
+        "eng_name": "",
+    }
+
+
 def fetch_book_info(
     slug: str,
     max_retries: int = 3,
     cookies: Optional[Dict[str, str]] = None,
     auth_token: Optional[str] = None,
 ):
-    """
-    Возвращает информацию о книге (название, описание и т.д.).
-    Получает информацию из списка глав, так как прямой endpoint не работает.
-    """
+    """Возвращает русское название, id и прочую информацию о книге."""
+    headers = _api_headers(auth_token, cookies)
+    fields = [("fields[]", key) for key in ("eng_name", "summary", "chap_count")]
+
     for attempt in range(max_retries):
         try:
             resp = requests.get(
-                f"{API_BASE}/{slug}/chapters",
+                f"{API_BASE}/{slug}",
+                params=fields,
                 timeout=TIMEOUT,
                 cookies=cookies,
-                headers=_api_headers(auth_token, cookies),
+                headers=headers,
             )
+            if resp.status_code in (401, 403) and auth_token:
+                print("🔐 Bearer-токен не работает или устарел (API вернул 401/403). Обновите токен.")
+                return _book_info_fallback(slug)
             resp.raise_for_status()
-            raw = resp.json().get("data", [])
-            chapters_data = raw if isinstance(raw, list) else []
-
-            if not chapters_data:
-                return {"display_name": f"Книга_{slug}", "name": slug}
-
-            # Извлекаем информацию из первой главы
-            first_chapter = chapters_data[0]
-
-            # Создаем базовую информацию о книге
-            book_info = {
-                "display_name": f"Книга_{slug}",
-                "name": slug,
-                "slug": slug,
-                "chapters_count": len(chapters_data),
-                "first_chapter": first_chapter,
-            }
-
-            return book_info
+            raw = resp.json().get("data")
+            data = raw if isinstance(raw, dict) else {}
+            if data.get("rus_name") or data.get("name") or data.get("id"):
+                info = _book_info_from_manga_payload(slug, data)
+                if not info["chapters_count"]:
+                    try:
+                        ch_resp = requests.get(
+                            f"{API_BASE}/{slug}/chapters",
+                            timeout=TIMEOUT,
+                            cookies=cookies,
+                            headers=headers,
+                        )
+                        ch_resp.raise_for_status()
+                        arr = ch_resp.json().get("data", [])
+                        if isinstance(arr, list):
+                            info["chapters_count"] = len(arr)
+                    except requests.exceptions.RequestException:
+                        pass
+                return info
+            raise ValueError("пустой ответ API о книге")
         except requests.exceptions.Timeout:
             print(
                 f"  Таймаут при получении информации о книге (попытка {attempt + 1}/{max_retries})"
@@ -189,7 +253,7 @@ def fetch_book_info(
         "  Подсказка: 18+ и часть каталога требуют сессии — cookies из браузера, "
         "JWT в cookie (подхватывается автоматически) или --auth-token."
     )
-    return {}
+    return _book_info_fallback(slug)
 
 
 def fetch_chapters_list(

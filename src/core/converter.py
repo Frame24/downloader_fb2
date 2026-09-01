@@ -8,8 +8,6 @@
 import json
 import re
 import shutil
-import sys
-from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
 
@@ -17,6 +15,7 @@ from pathlib import Path
 from ..utils.encoding import setup_console_encoding
 setup_console_encoding()
 
+from ..client import safe_filename
 from ..fb2 import build_fb2, merge_chapters_to_book
 
 
@@ -164,14 +163,10 @@ class DataConverter:
                 "description": f"Книга '{book_title}' - объединенные главы",
             }
 
-            # Создаем имя файла для объединенной книги
+            # Имя файла: «Русское название.fb2», части — «Русское название_ЧастьN.fb2»
             book_name = book_info.get("display_name", book_info.get("name", "Книга"))
-            safe_name = "".join(
-                c for c in book_name if c.isalnum() or c in " -_"
-            ).rstrip()
-            current_time = datetime.now()
-            time_str = current_time.strftime("%Y-%m-%d_%H-%M-%S")
-            final_filename = f"{safe_name}_{time_str}.fb2"
+            safe_name = safe_filename(book_name)
+            final_filename = f"{safe_name}.fb2"
             final_path = Path(output_dir) / final_filename
 
             # Объединяем главы напрямую в нужную папку
